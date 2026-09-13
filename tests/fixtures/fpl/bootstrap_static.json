@@ -1,0 +1,7 @@
+{
+  "elements": [{"id": 1, "team": 1, "element_type": 3, "web_name": "Søren"}],
+  "teams": [{"id": 1, "name": "Example home"}, {"id": 2, "name": "Example away"}],
+  "events": [{"id": 1, "deadline_time": "2026-09-13T10:00:00Z"}],
+  "element_types": [{"id": 3, "singular_name_short": "MID"}],
+  "future_field": {"preserve": true}
+}

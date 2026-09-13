@@ -1,0 +1,4 @@
+[
+  {"id": 1, "event": 1, "kickoff_time": "2026-09-13T12:00:00Z", "team_h": 1, "team_a": 2, "finished": false},
+  {"id": 2, "event": null, "kickoff_time": null, "team_h": 2, "team_a": 1, "finished": false}
+]

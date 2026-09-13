@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -186,6 +187,8 @@ class SnapshotWriter:
         self._files: list[dict] = []
         self._failures: list[dict] = []
         self._source_commits: dict[str, str] = {}
+        self._active_source: tuple[str, bool] | None = None
+        self._run_metadata: dict[str, str] = {}
         self._state = "staging"
         self._completed_at: str | None = None
         if self.final_path.exists():
@@ -209,6 +212,62 @@ class SnapshotWriter:
         if self._state != "staging":
             raise SnapshotStateError("Run is closed; create a new snapshot")
 
+    @contextmanager
+    def source_scope(self, source: str, *, required: bool):
+        """Bind adapter writes to one namespace and explicit run criticality.
+
+        The same writer is passed to every adapter. Local file requirements are
+        retained as adapter_required when overridden by an optional source policy.
+        This is an API guard, not a sandbox against arbitrary filesystem access.
+        """
+        self._ensure_open()
+        _source(source)
+        if type(required) is not bool or self._active_source is not None:
+            raise SnapshotStateError("Invalid or nested source scope")
+        self._active_source = (source, required)
+        try:
+            yield self
+        finally:
+            self._active_source = None
+
+    def _source_requirement(self, source: str, required: bool) -> tuple[bool, dict]:
+        if self._active_source is None:
+            return required, {}
+        active, source_required = self._active_source
+        if source != active:
+            raise SnapshotStateError("Adapter cannot write another source's provenance")
+        effective = source_required and required
+        return effective, ({"adapter_required": required} if effective != required else {})
+
+    def set_run_metadata(self, values: dict[str, str]) -> None:
+        """Store detached public orchestration settings/report before publication."""
+        self._ensure_open()
+        if self._active_source is not None:
+            raise SnapshotStateError("Only the runner may change run metadata")
+        metadata = _public_request_metadata(None, values)["request_context"]
+        self._run_metadata = metadata
+        try:
+            self._write_manifest()
+        except BaseException:
+            self._mark_failed()
+            raise
+
+    def mark_failed(self, *, run_metadata: dict[str, str] | None = None) -> None:
+        """Close a run, retaining bytes and optionally recording its failure report.
+
+        Failed staging runs may receive their final runner report even when an
+        I/O/integrity error already closed the writer. Published runs cannot.
+        """
+        if self._active_source is not None:
+            raise SnapshotStateError("Only the runner may close the run")
+        if self._state != "failed":
+            self._ensure_open()
+        if run_metadata is not None:
+            self._run_metadata = _public_request_metadata(None, run_metadata)["request_context"]
+        elif self._state == "failed":
+            return
+        self._mark_failed()
+
     def pin_source_commit(self, source: str, commit_sha: str) -> str:
         """Fix a source's commit for this entire run, before requesting its files.
 
@@ -217,6 +276,8 @@ class SnapshotWriter:
         """
         self._ensure_open()
         _source(source)
+        if self._active_source is not None and source != self._active_source[0]:
+            raise SnapshotStateError("Adapter cannot pin another source")
         sha = _commit_sha(commit_sha)
         if source in self._source_commits:
             if self._source_commits[source] != sha:
@@ -249,6 +310,7 @@ class SnapshotWriter:
             "files": self._files,
             "failures": self._failures,
             **({"source_commits": self._source_commits} if self._source_commits else {}),
+            **({"run_metadata": self._run_metadata} if self._run_metadata else {}),
         }
         payload = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
         temporary = self.staging_path / f".manifest-{uuid4().hex}.tmp"
@@ -288,12 +350,16 @@ class SnapshotWriter:
         relative = "raw/" + _relative_path(relative_path)
         if not isinstance(data, bytes) or type(required) is not bool:
             raise TypeError("Expected raw bytes and a boolean required flag")
+        required, policy = self._source_requirement(source, required)
+        if self._active_source is not None and not relative.startswith(f"raw/{source}/"):
+            raise SnapshotStateError("Adapter raw files must stay in their source namespace")
         started, retrieved = _timestamp(request_started_at), _timestamp(retrieved_at)
         if retrieved < started:
             raise ValueError("Retrieval cannot precede request start")
         outcome = _outcome(http_status)
         provenance = {} if request_url is None else {"request_url": _request_url(request_url)}
         provenance.update(_public_request_metadata(request_params, request_context))
+        provenance.update(policy)
         if content_type is not None:
             if not isinstance(content_type, str) or "\r" in content_type or "\n" in content_type:
                 raise ValueError("Expected a single Content-Type header value")
@@ -345,7 +411,9 @@ class SnapshotWriter:
         _source(source)
         if type(required) is not bool or outcome not in {"request_failed", "skipped"}:
             raise ValueError("Invalid request failure metadata")
+        required, policy = self._source_requirement(source, required)
         provenance = {} if request_url is None else {"request_url": _request_url(request_url)}
+        provenance.update(policy)
         provenance.update(_public_request_metadata(request_params, request_context))
         if error_code is not None:
             _source(error_code)
@@ -387,6 +455,8 @@ class SnapshotWriter:
         it. Hard links never replace existing files. Successful staging is removed.
         """
         self._ensure_open()
+        if self._active_source is not None:
+            raise SnapshotStateError("Only the runner may finalize the snapshot")
         try:
             if not self._files or any(
                 entry["required"] and entry["outcome"] != "success"
@@ -443,6 +513,8 @@ def verify_snapshot(directory: Path) -> dict:
             raise ValueError("Snapshot is not complete or schema is unsupported")
         if UUID(manifest["run_id"]).hex != manifest["run_id"]:
             raise ValueError("Invalid run ID")
+        if "run_metadata" in manifest:
+            _public_request_metadata(None, manifest["run_metadata"])
         pins = manifest.get("source_commits", {})
         if not isinstance(pins, dict):
             raise ValueError("Invalid source commit pins")
@@ -451,6 +523,8 @@ def verify_snapshot(directory: Path) -> dict:
             if _commit_sha(sha) != sha:
                 raise ValueError("Noncanonical commit SHA")
         for entry in [*manifest["files"], *manifest["failures"]]:
+            if "adapter_required" in entry and type(entry["adapter_required"]) is not bool:
+                raise ValueError("Invalid adapter file requirement")
             _public_request_metadata(entry.get("request_params"), entry.get("request_context"))
             source = entry["source"]
             if "commit_sha" in entry or source in pins:

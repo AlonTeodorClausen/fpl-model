@@ -9,12 +9,8 @@ MODELS = ROOT / "models"
 FPL_BOOTSTRAP = "https://fantasy.premierleague.com/api/bootstrap-static/"
 FPL_FIXTURES = "https://fantasy.premierleague.com/api/fixtures/"
 
-FPL_CORE_RAW = (
-    "https://raw.githubusercontent.com/olbauday/"
-    "FPL-Core-Insights/main/data/2026-2027"
-)
-FOOTBALL_DATA_UK_FIXTURES = (
-    "https://www.football-data.co.uk/matches/resources/fixtures.csv"
-)
+# Adapter appends an explicit commit SHA, season and filename; never floating main.
+FPL_CORE_RAW = "https://raw.githubusercontent.com/olbauday/FPL-Core-Insights"
+FOOTBALL_DATA_UK_FIXTURES = "https://www.football-data.co.uk/fixtures.csv"
 FOOTBALL_DATA_ORG = "https://api.football-data.org/v4"
 CLUBELO = "http://api.clubelo.com"
