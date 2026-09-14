@@ -1,0 +1,34 @@
+[
+  {
+    "file": "core_tree.json",
+    "url": "https://api.github.com/repos/olbauday/FPL-Core-Insights/git/trees/907f666f2dc6796d417e49287fd31f88263f1d67?recursive=1",
+    "status": 200,
+    "retrieved_at": "2026-09-14T14:20:25.193709+00:00",
+    "sha256": "ba91a7716d84dcb8d2994145d1d1cb251b7e2448c34cc9b89cbbe2b6af322b95",
+    "bytes": 892272
+  },
+  {
+    "file": "core_readme.md",
+    "url": "https://raw.githubusercontent.com/olbauday/FPL-Core-Insights/907f666f2dc6796d417e49287fd31f88263f1d67/README.md",
+    "status": 200,
+    "retrieved_at": "2026-09-14T14:20:25.518591+00:00",
+    "sha256": "8b6a6f028b1337e8f8a7363400a334ef108a12ba0a0c0ed010542afea9c2fd82",
+    "bytes": 24855
+  },
+  {
+    "file": "core_commit.json",
+    "url": "https://api.github.com/repos/olbauday/FPL-Core-Insights/commits/907f666f2dc6796d417e49287fd31f88263f1d67",
+    "status": 200,
+    "retrieved_at": "2026-09-14T14:20:26.340286+00:00",
+    "sha256": "c1580d10138aa04240a994b6a16493098964c3a1d59d60231684050a96f9dd8d",
+    "bytes": 1177847
+  },
+  {
+    "file": "football_data_uk_notes.txt",
+    "url": "https://football-data.co.uk/notes.txt",
+    "status": 200,
+    "retrieved_at": "2026-09-14T14:20:26.492088+00:00",
+    "sha256": "6ecd41a98ad2751372817e7e6f1709bfeb433c53dd9aeda330fd926a5471452d",
+    "bytes": 7686
+  }
+]
