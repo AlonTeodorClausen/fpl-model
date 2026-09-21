@@ -1,0 +1,215 @@
+{
+  "fixture_kind": "synthetic_contract_cases_not_claimed_live_observations",
+  "cases": [
+    {
+      "name": "normal_single_gw",
+      "history": [
+        {}
+      ],
+      "want_rows": 1,
+      "want_states": [
+        "final"
+      ]
+    },
+    {
+      "name": "explicit_zero_minutes",
+      "history": [
+        {
+          "minutes": 0,
+          "starts": 0,
+          "total_points": 0
+        }
+      ],
+      "want_rows": 1,
+      "want_states": [
+        "final"
+      ]
+    },
+    {
+      "name": "missing_row",
+      "history": [],
+      "want_rows": 0,
+      "want_states": []
+    },
+    {
+      "name": "substitute",
+      "history": [
+        {
+          "minutes": 23,
+          "starts": 0,
+          "total_points": 1
+        }
+      ],
+      "want_rows": 1,
+      "want_states": [
+        "final"
+      ]
+    },
+    {
+      "name": "double_gameweek",
+      "history": [
+        {},
+        {
+          "fixture": 12,
+          "kickoff_time": "2026-09-15T19:00:00Z"
+        }
+      ],
+      "extra_fixture": {
+        "id": 12,
+        "kickoff_time": "2026-09-15T19:00:00Z"
+      },
+      "want_rows": 2,
+      "want_states": [
+        "final",
+        "final"
+      ]
+    },
+    {
+      "name": "postponed_no_history",
+      "history": [],
+      "fixture_patch": {
+        "event": null,
+        "kickoff_time": null,
+        "started": false,
+        "finished": false
+      },
+      "want_rows": 0,
+      "want_states": []
+    },
+    {
+      "name": "postponed_stale_history",
+      "history": [
+        {}
+      ],
+      "fixture_patch": {
+        "event": null,
+        "kickoff_time": null,
+        "started": false,
+        "finished": false
+      },
+      "want_rows": 0,
+      "want_quarantine": 1,
+      "want_states": []
+    },
+    {
+      "name": "rescheduled_consistently",
+      "history": [
+        {
+          "round": 5,
+          "kickoff_time": "2026-09-20T14:00:00Z"
+        }
+      ],
+      "fixture_patch": {
+        "event": 5,
+        "kickoff_time": "2026-09-20T14:00:00Z"
+      },
+      "event_patch": {
+        "id": 5
+      },
+      "want_rows": 1,
+      "want_states": [
+        "final"
+      ]
+    },
+    {
+      "name": "rescheduled_stale_context",
+      "history": [
+        {}
+      ],
+      "fixture_patch": {
+        "event": 5,
+        "kickoff_time": "2026-09-20T14:00:00Z"
+      },
+      "event_patch": {
+        "id": 5
+      },
+      "want_rows": 0,
+      "want_quarantine": 1,
+      "want_states": []
+    },
+    {
+      "name": "transfer",
+      "history": [
+        {},
+        {
+          "fixture": 12,
+          "was_home": false,
+          "opponent_team": 1,
+          "round": 5,
+          "kickoff_time": "2026-09-20T14:00:00Z"
+        }
+      ],
+      "extra_fixture": {
+        "id": 12,
+        "team_h": 1,
+        "team_a": 3,
+        "event": 5,
+        "kickoff_time": "2026-09-20T14:00:00Z"
+      },
+      "current_team": 3,
+      "want_rows": 2,
+      "want_teams": [
+        1,
+        3
+      ],
+      "want_states": [
+        "final",
+        "final"
+      ],
+      "extra_event": {
+        "id": 5
+      }
+    },
+    {
+      "name": "current_gw",
+      "history": [
+        {}
+      ],
+      "event_patch": {
+        "finished": false,
+        "data_checked": false
+      },
+      "want_rows": 1,
+      "want_states": [
+        "provisional"
+      ]
+    },
+    {
+      "name": "unchecked_gw",
+      "history": [
+        {}
+      ],
+      "event_patch": {
+        "data_checked": false
+      },
+      "want_rows": 1,
+      "want_states": [
+        "provisional"
+      ]
+    },
+    {
+      "name": "unfinished_fixture",
+      "history": [
+        {}
+      ],
+      "fixture_patch": {
+        "finished": false,
+        "finished_provisional": true
+      },
+      "want_rows": 1,
+      "want_states": [
+        "provisional"
+      ]
+    },
+    {
+      "name": "finalized_gw",
+      "history": [
+        {}
+      ],
+      "want_rows": 1,
+      "want_states": [
+        "final"
+      ]
+    }
+  ]
+}
