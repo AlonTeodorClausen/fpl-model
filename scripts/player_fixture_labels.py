@@ -25,8 +25,9 @@ def capture_sample(raw_root, *, season, element_ids, session=None):
     if not re.fullmatch(r'\d{4}-\d{4}', season) or int(season[5:]) != int(season[:4]) + 1:
         raise ValueError('Expected explicit YYYY-YYYY season')
     writer = SnapshotWriter(raw_root)
-    writer.set_run_metadata({'purpose': 'step2c_official_player_labels', 'season': season,
-                             'element_ids': ','.join(map(str, ids))})
+    metadata={'purpose': 'step2c_official_player_labels', 'season': season,'player_count':str(len(ids))}
+    if len(','.join(map(str,ids)))<=128: metadata['element_ids']=','.join(map(str,ids))
+    writer.set_run_metadata(metadata)
     try:
         with requests.Session() if session is None else nullcontext(session) as client:
             fetch_fpl_snapshot(writer, session=client)

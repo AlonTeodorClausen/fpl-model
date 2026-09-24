@@ -1,5 +1,7 @@
 # Step 2C — bounded official-FPL player-fixture label ingestion
 
+Opdatering 24. september 2026: Step 2C-beskrivelsen nedenfor er historisk. Den senere fuld-pulje-workflow i `scripts/capture_all_players.py` fjerner 20-spillergrænsen, bruger friske bootstrap-ID'er og understøtter eksplicit delvis dækning og begrænsede retries. Legacy sample-/freeze-kald er fortsat required/fail-fast som standard. Se README for den aktuelle arbejdsgang; tidligere captures og labels er uændrede.
+
 This stage captures an explicit player sample and normalizes official FPL history only. It does not expand the multi-source runner, ingest the player universe, join Core, select forecasting inputs, build features or train models. The existing Step 2B identity/time/finality contracts remain in use and unchanged.
 
 ## Interface and raw capture

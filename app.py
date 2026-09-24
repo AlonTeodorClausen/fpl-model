@@ -13,7 +13,8 @@ sys.path.insert(0,str(ROOT/'src'))
 from fpl_model.label_contracts import utc
 from fpl_model.models.baseline import BaselineConfig
 from fpl_model.prototype_data import load_data, snapshot_paths
-from fpl_model.prototype import run_prototype
+from fpl_model.prototype import run_prototype, save_run
+from fpl_model.backtest.walk_forward import EVALUATION_VERSION
 
 st.set_page_config(page_title='FPL Lab',page_icon='⚽',layout='wide')
 st.title('FPL Lab · én gameweek')
@@ -32,6 +33,17 @@ labels={p['id']:f"{p['web_name']} · {clubs[p['team']]} · #{p['id']}" for p in 
 age=(datetime.now(timezone.utc)-utc(data['as_of_at'])).total_seconds()/86400
 st.info(f"Data observeret {data['as_of_at']} · {max(age,0):.1f} dage gamle · {len(data['players'])} spillere · "
         f"{len({r['player_id'] for r in data['histories']})} med kampvis historik. Ingen nye downloads ved appstart.")
+coverage=data.get('coverage')
+if coverage:
+    st.write(f"**Dækning:** {coverage['attempted_players']} forsøgt · {coverage['successful_responses']} gyldige svar · "
+             f"{len(coverage['empty_history_players'])} tomme historikker · {len(coverage['failed_players'])} fejl · "
+             f"{len(coverage['missing_response_players'])} uden gyldigt svar · {coverage['accepted_rows']} brugbare spiller-kampe.")
+    st.caption(f"{coverage['explicit_zero_minute_rows']} eksplicitte nulminuttersrækker · {coverage['quarantined_rows']} i karantæne. "
+               'Tom historik eller manglende svar er ikke DNP. Huller/uklar klubhistorik bruges ikke som deltagelsesnævner.')
+    with st.expander('Dækning pr. spiller og ny dataindsamling'):
+        st.dataframe(pd.DataFrame(coverage['players']),hide_index=True)
+        st.write('Hent et nyt snapshot eksplicit i terminalen, og genindlæs derefter appen:')
+        st.code('.venv/bin/python scripts/capture_all_players.py --season 2026-2027 --request-interval 0.5',language='bash')
 events=[e['id'] for e in data['events'] if utc(e['deadline_time'])>utc(data['as_of_at'])]
 if not events: st.error('Snapshot har ingen fremtidige deadlines.');st.stop()
 event=st.sidebar.selectbox('Gameweek (én ad gangen)',events)
@@ -53,14 +65,15 @@ locked=st.sidebar.multiselect('Lås i trup',list(labels),format_func=labels.get)
 excluded=st.sidebar.multiselect('Udeluk',list(labels),format_func=labels.get)
 config=BaselineConfig(prior_games=prior,minutes_prior_games=minute_prior,starter_minutes=start_minutes,
                       attack_scale=attack,home_goals=home,away_goals=away,injury_unknown_factor=injury)
-signature=(str(chosen),event,budget,draws,int(seed),config,tuple(locked),tuple(excluded),bench_weight)
+signature=(EVALUATION_VERSION,str(chosen),event,budget,draws,int(seed),config,tuple(locked),tuple(excluded),bench_weight)
 if st.button('Kør prognose, simulation og optimering',type='primary'):
     try:
         with st.spinner('Simulerer spillere, vælger lovligt hold og evaluerer i nye scenarier …'):
             result=run_prototype(data,event,config,draws=draws,seed=seed,budget=budget,
                                   locked=locked,excluded=excluded,bench_weight=bench_weight)
         st.session_state['result']=result;st.session_state['signature']=signature
-    except (ValueError,RuntimeError) as exc:
+        st.session_state['saved_run']=str(save_run(result[0]))
+    except (ValueError,RuntimeError,OSError) as exc:
         st.error(str(exc))
         st.session_state.pop('result',None)
 if 'result' not in st.session_state:
@@ -69,6 +82,7 @@ if 'result' not in st.session_state:
 if st.session_state['signature']!=signature:
     st.warning('Indstillingerne er ændret. Kør igen for at opdatere resultaterne.');st.stop()
 report,simulation,totals=st.session_state['result']
+st.caption('Kørsel gemt: '+st.session_state['saved_run'])
 frame=pd.DataFrame(report['players'])
 frame['club']=frame.team_id.map(clubs)
 frame['£m']=frame.price/10
@@ -91,7 +105,7 @@ for col,label,value in zip(columns,['Holdets forventede point','P10 / median / P
 st.caption('Holdfordelingen bruger et andet seed end optimeringen. Autosubs og viceanfører beregnes pr. scenarie; '
            'bænkrækkefølge og viceanfører vælges efter xP. Optimeringsmålet bruger en simpel bænkvægt.')
 if not team['solver_optimal']: st.warning(f"Solveren returnerede en lovlig, men ikke bevist optimal løsning; gap {team['mip_gap']:.3%}.")
-players_tab,squad_tab,eval_tab=st.tabs(['Spillere og fordelinger','Hold og simulation','Første evaluering'])
+players_tab,squad_tab,eval_tab=st.tabs(['Spillere og fordelinger','Hold og simulation','Evaluering'])
 with players_tab:
     display=['player_id','name','club','position_name','£m','xp','expected_minutes','p10','p50','p90','dnp_percent','basis','fallbacks']
     st.dataframe(frame.sort_values('xp',ascending=False)[display],hide_index=True,column_config=table_columns)
@@ -111,12 +125,30 @@ with squad_tab:
     st.bar_chart(pd.DataFrame({'Holdpoint':values,'Sandsynlighed':counts/len(totals['points'])}).set_index('Holdpoint'))
 with eval_tab:
     evaluation=report['evaluation']
-    st.warning('Retrospektiv mini-evaluering med begrænset tidsprovenance. Ikke en prospektiv test og ikke evidens for kalibrering.')
+    st.warning('Retrospektiv evaluering med begrænset tidsprovenance. Ikke en prospektiv test og ikke evidens for kalibrering.')
     if evaluation['n']:
-        st.write(f"{evaluation['n']} spiller-GW-observationer. Mindst to tidligere kampobservationer før hver test-GW.")
+        st.write(f"{evaluation['player_count']} spillere · {evaluation['n']} spiller-GW-observationer · "
+                 f"{len(evaluation['gameweeks'])} gameweeks ({', '.join(map(str,evaluation['gameweeks']))}). "
+                 'Samme rækker for begge metoder; mindst to tidligere kampe og kontrolleret historikdækning.')
         st.dataframe(pd.DataFrame([{'Metode':'Komponentbaseline',**evaluation['model']},
                                    {'Metode':'Tidligere pointgennemsnit',**evaluation['reference']}]),hide_index=True)
-        st.dataframe(pd.DataFrame(evaluation['rows']),hide_index=True)
+        for title,key,group in [('Pr. position','by_position','position'),('Pr. gameweek','by_gameweek','event')]:
+            st.write('**'+title+'**')
+            grouped=[]
+            for row in evaluation[key]:
+                for method in ('model','reference'):
+                    grouped.append({group:row[group],'Metode':method,'n':row['n'],**row[method]})
+            st.dataframe(pd.DataFrame(grouped),hide_index=True)
+        minutes=evaluation['minutes'];dnp=evaluation['dnp']
+        st.write(f"**Minutter:** MAE {minutes['mae']:.2f} / RMSE {minutes['rmse']:.2f}; "
+                 f"reference MAE {minutes['reference']['mae']:.2f} / RMSE {minutes['reference']['rmse']:.2f}.")
+        st.write(f"**Ingen spilletid:** Brier {dnp['brier']:.4f}; reference {dnp['reference_brier']:.4f}. "
+                 f"Forventet andel {dnp['predicted_rate']:.1%}, observeret {dnp['observed_rate']:.1%}. Lavere Brier er bedre.")
+        st.dataframe(pd.DataFrame(dnp['bins']),hide_index=True)
+        with st.expander('Evalueringsrækker og udeladelser'):
+            st.dataframe(pd.DataFrame(evaluation['rows']),hide_index=True)
+            st.write(evaluation['excluded_counts'])
+            st.dataframe(pd.DataFrame(evaluation['excluded']),hide_index=True)
     else: st.info('Utilstrækkelig final spillerhistorik til en sammenligning. Resten af prototypen er tilgængelig.')
     for limitation in evaluation['limitations']: st.caption(limitation)
 with st.expander('Antagelser og afgrænsning'):

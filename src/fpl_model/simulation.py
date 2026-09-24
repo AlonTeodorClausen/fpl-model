@@ -10,6 +10,7 @@ import numpy as np
 from fpl_model.label_contracts import utc
 from fpl_model.models.baseline import player_parameters, fixture_goal_means
 from fpl_model.scoring import score_points
+from fpl_model.history_coverage import history_window
 
 
 @dataclass
@@ -52,9 +53,17 @@ def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False)
                  and (not retrospective or r['event'] < event)
                  and (retrospective or (r.get('available_at') is not None
                                        and utc(r['available_at']) <= cutoff))]
-    params = {p['id']:player_parameters(p,[r for r in histories if r['player_id']==p['id']],
-                 sum(p['team'] in (f['team_h'],f['team_a']) for f in past), config,
-                 allow_aggregates=not retrospective) for p in players}
+    params = {}
+    for p in players:
+        own=[r for r in histories if r['player_id']==p['id']]
+        coverage=history_window(own,past,p['team'])
+        par=player_parameters(p,own if coverage['usable'] else [],coverage['expected_rows'],config,
+                              allow_aggregates=not retrospective)
+        par['expected_missing_fixture_ids']=coverage['expected_missing_fixture_ids']
+        par['history_coverage']=coverage['state']
+        if not coverage['usable']:
+            par['fallbacks']=sorted(set(par['fallbacks']+[coverage['state']]))
+        params[p['id']]=par
     for f in sorted((f for f in data['fixtures'] if f.get('event')==event), key=lambda f:f['id']):
         lambdas = fixture_goal_means(f,past,config)
         # Same opponent goal times for every teammate. This models clean-sheet correlation.

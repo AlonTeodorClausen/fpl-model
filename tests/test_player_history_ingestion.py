@@ -60,9 +60,59 @@ def test_explicit_failure_no_retry_no_fake_history(tmp_path, response):
     assert not writer.final_path.exists()
 
 
-@pytest.mark.parametrize('ids', [[], [True], [0], [1,1], ['1'], list(range(1,658))])
+@pytest.mark.parametrize('ids', [[], [True], [0], [1,1], ['1']])
 def test_bounded_explicit_ids_before_any_network(tmp_path, ids):
     session = Session(Response(b'{"history":[]}'))
     with pytest.raises(ValueError):
         adapter.fetch_player_histories(SnapshotWriter(tmp_path), ids, session=session)
     assert session.calls == []
+
+
+def test_ids_can_cover_a_dynamic_full_pool():
+    assert adapter.validate_element_ids(range(1000, 1803)) == tuple(range(1000, 1803))
+
+
+def test_optional_retries_preserve_bodies_and_respect_retry_after(tmp_path):
+    responses = [Response(b'busy', 429), Response(b' {"history":[]}\r\n')]
+    responses[0].headers['Retry-After'] = '4'
+    class Sequence(Session):
+        def get(self, url, **kwargs):
+            self.calls.append(url)
+            return responses.pop(0)
+    session=Sequence(None); waits=[]; progress=[]
+    writer=SnapshotWriter(tmp_path, clock=lambda: NOW)
+    results=adapter.fetch_player_histories(writer,[12],session=session,clock=lambda: NOW,
+        required=False,max_attempts=3,request_interval=.5,sleep=waits.append,progress=progress.append)
+    assert results[0]['status']=='success' and results[0]['attempts']==2
+    assert waits==[4.0] and progress[-1]['completed']==1
+    path=writer.finalize(); manifest=verify_snapshot(path)
+    assert [f['http_status'] for f in manifest['files']]==[429,200]
+    assert [(path/f['relative_path']).read_bytes() for f in manifest['files']]==[b'busy',b' {"history":[]}\r\n']
+    assert all(f['required'] is False for f in manifest['files'])
+
+
+@pytest.mark.parametrize('status, retry_after, attempts',[(503,'',3),(429,'120',1),(403,'',1)])
+def test_optional_failure_is_bounded_and_does_not_become_empty_history(tmp_path,status,retry_after,attempts):
+    response=Response(b'failure',status);response.headers['Retry-After']=retry_after
+    session=Session(response);writer=SnapshotWriter(tmp_path,clock=lambda:NOW)
+    result=adapter.fetch_player_histories(writer,[1,2],session=session,clock=lambda:NOW,
+        required=False,max_attempts=3,request_interval=.5,sleep=lambda _:None)
+    assert len(session.calls)==(attempts if status==429 else 2*attempts)
+    assert result[0]['status']=='http_error' and result[0]['raw_path'] is None
+    if status==429: assert result[1]['status']=='deferred' and result[1]['attempts']==0
+    assert len(verify_snapshot(writer.finalize())['failures'])==(2 if status==429 else 2*attempts)
+
+
+def test_final_503_retry_after_is_honored_before_the_next_player(tmp_path):
+    waits=[];request_sleep_totals=[]
+    responses=[Response(b'busy',503) for _ in range(3)]+[Response(b'{"history":[]}')]
+    for response in responses[:3]: response.headers['Retry-After']='10'
+    class Sequence:
+        def get(self,url,**kwargs):
+            request_sleep_totals.append(sum(waits))
+            return responses.pop(0)
+    writer=SnapshotWriter(tmp_path,clock=lambda:NOW)
+    result=adapter.fetch_player_histories(writer,[1,2],session=Sequence(),clock=lambda:NOW,
+        required=False,max_attempts=3,request_interval=.5,sleep=waits.append)
+    assert result[0]['status']=='http_error' and result[1]['status']=='success'
+    assert request_sleep_totals[3]-request_sleep_totals[2]>=10

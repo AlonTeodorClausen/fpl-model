@@ -1,6 +1,6 @@
 # FPL Lab
 
-Kørbar lokal prototype: officielle snapshotdata → komponentbaseline → pointfordelinger → lovlig trup/XI/anfører → simulation af holdet og en lille retrospektiv evaluering.
+Kørbar lokal prototype: officielle snapshotdata → komponentbaseline → pointfordelinger → lovlig trup/XI/anfører → simulation af holdet og kronologisk retrospektiv evaluering.
 
 ## Start
 
@@ -22,9 +22,23 @@ Samme kæde uden brugerflade:
 
 CLI vælger det nyeste verificerede officielle snapshot; brug `--snapshot PATH` for et bestemt input. Udelad `--event` for den første GW efter snapshotets observationstid. `--locked 1 439` og `--excluded 26` bruger officielle spiller-ID'er. Hver kørsel opretter en ny mappe under `artifacts/prototype/` med `report.json` og `players.csv`. Eksisterende output overskrives ikke. Ingen downloads sker ved modelkørsel eller appstart.
 
+## Frisk kampvis historik for hele spillerpuljen
+
+Dataindsamling er en eksplicit CLI-handling, adskilt fra Streamlit-genkørsler:
+
+```bash
+.venv/bin/python scripts/capture_all_players.py --season 2026-2027 --request-interval 0.5
+```
+
+Kommandoen henter frisk officiel bootstrap/fixtures og derefter alle spiller-ID'er fra netop dette bootstrap. Ingen hardcodet puljestørrelse. Én session, sekventielle requests, 0,5 sekunders pause (minimum 0,25), connect/read-timeout 10/30 sekunder, højst tre spillerforsøg ved 429/5xx/timeout/forbindelsesfejl og 1/2 sekunders backoff. `Retry-After` respekteres også mellem spillere; ved ventetid over 30 sekunder eller udtømte 429-forsøg udskydes resten eksplicit. Bootstrap/fixtures anvender fortsat den eksisterende adapters fail-fast-politik.
+
+Hver rå body og hvert forsøg gemmes uændret i et nyt snapshot. Context er påkrævet; individuelle spillerfejl tillades med `overall=partial`, fejlede/udskudte ID'er og tidsprovenance. Ingen fallback til tidligere captures. Afbrydelse bevarer staging-data og publicerer ikke et komplet snapshot. Der er endnu ingen resumefunktion for afbrudte runs. Normalisering genbruger labelkontrakterne; dens rapport ligger under `artifacts/player_history/`. CLI-exit: 0 komplet uden karantæne, 2 delvis dækning/karantæne, 1 workflowfejl.
+
+Genindlæs appen og vælg det nye snapshot. Den viser forsøg, gyldige svar, tomme historikker, fejl/manglende svar, brugbare rækker, eksplicitte nulminutter og karantæne samt status pr. spiller.
+
 ## Data og antagelser
 
-Det seneste eksisterende snapshot, 21. september 2026, indeholder 667 spillere og seks spilleres kampvise historik. Appen viser datatidspunkt og alder. GW-valget er relativt til snapshotet; et gammelt snapshot er ikke en live-skadesopdatering. Sæsonen er foreløbig 2026/27.
+Den første fulde indsamling, 24. september 2026, hentede 667/667 spillere: 3.216 finale spiller-kampe, 1.678 eksplicitte nulminuttersrækker, ingen tomme historikker, fejl eller karantæne. Snapshot: `2026-09-24_164002695814Z_4fee7b0047014ffba28b416e9b9928ce`. De tidligere samples er bevaret. Appen viser datatidspunkt og alder. GW-valget er relativt til snapshotet; et gammelt snapshot er ikke en live-skadesopdatering. Sæsonen er foreløbig 2026/27.
 
 - **Spilletid:** start/indskiftning/DNP med udglattede frekvenser. Med kampdata bruges observerede starter og minutter; ellers aktuelle sæsonminutter/starter og en markeret tilnærmelse for indskiftninger. Kampantal for nuværende klub er en tilnærmelse for tilflyttere og sent tilføjede spillere.
 - **Kort/manglende historik:** eksplicitte priors og en `fallbacks`-kolonne. Standard er én prior-kamp med startchance 0,45, indskiftningschance 0,10 og 82/22 minutter. Ukendt er ikke nul. Manglende historikrækker bruges ikke som DNP.
@@ -46,9 +60,15 @@ Målet er XI-xP + anfører-xP + konfigurerbar vægt af bænk-xP (standard 0,10).
 
 Liveprognosen bruger det valgte snapshot og kampobservationer tilgængelige senest på dets observationstid. Et snapshot efter GW-deadline kan ikke bruges som prædeadlineprognose.
 
-Mini-evalueringen kræver mindst to tidligere kampobservationer og komplette, finale mål-GW-rækker. Begge metoder evalueres på præcis samme rækker. Referencen er gennemsnit af tidligere kamp-point ganget med mål-GW'ens kampantal. Begge bruger alene tidligere GWs med kickoff før deadline. Aktuelle sæsonaggregater, skadesstatus og odds bruges ikke til historiske prognoser. Baseline rapporterer MAE/RMSE/empirisk CRPS; punktreferencen MAE/RMSE.
+Evalueringen kræver mindst to tidligere kampobservationer og komplette, finale mål-GW-rækker. Begge metoder evalueres på præcis samme rækker. Referencen er gennemsnit af tidligere kamp-point ganget med mål-GW'ens kampantal. Begge bruger alene tidligere GWs med kickoff før deadline. Aktuelle sæsonaggregater, skadesstatus og odds bruges ikke til historiske prognoser. Baseline rapporterer MAE/RMSE/empirisk CRPS; punktreferencen MAE/RMSE. Appen viser samlet, pr. position og pr. GW, samt minut-MAE/RMSE og DNP-Brier med sandsynlighedsintervaller. Minutreferencen er tidligere kampminutters gennemsnit; DNP-referencen er tidligere nulminuttersfrekvens (opløftet i kampantal ved DGW, en uafhængighedsantagelse).
 
-Dette er **retrospektivt, ikke strikt prospektivt**: historiske labels er hentet senere og kan være revideret; positioner og kampplan er fra aktuelle versioner. Holdtilknytning udledes af tidligere observerede kampe; flyttede/ufuldstændige kampmængder udelades. Det lille udvalg er ikke repræsentativt. Historiske snapshots, bredere kampvis historik og en urørt testperiode mangler for stærkere konklusioner.
+Baselineformler og standardparametre er uændrede (`component_baseline_v1`). Et nyt konservativt dækningskrav beskytter nævneren: alle tidligere afsluttede kampe for én konsistent observeret klub skal have rækker. Huller, transfers og uklar registreringsstart giver markeret aggregate/prior-fallback i liveprognosen og udeladelse fra evalueringen. Manglende rækker bliver aldrig nulminutter. Denne politik kan udelade reelt komplette historikker for nye spillere; vi opfinder ikke registreringsdatoer.
+
+Den første brede kørsel (seed 42, 3.000 prognosescenarier og 2.000 evalueringsscenarier pr. GW) dækker 593 spillere / 1.779 spiller-GWs, GW3–5. Point-MAE/RMSE: baseline 1,376/2,191, reference 1,298/2,421; baseline-CRPS 0,810. Minut-MAE: 18,22 mod 11,47. DNP-Brier: 0,11097 mod 0,11201. Baseline er altså ikke bedre på alle mål; minutmodellen og overestimeret deltagelse er synlige svagheder, ikke rettet ved efterfølgende tuning i denne milepæl.
+
+Både appens kørselsknap og CLI gemmer `report.json`, `players.csv` og `evaluation_rows.csv` i en ny mappe. Rapporten indeholder konfiguration, seed, model-/evalueringsversion, kodechecksums, pakkeversioner, snapshot-ID/manifestchecksum, dækning, grupperede resultater og udeladte ID'er/årsager. Det er lagring af en enkelt kørsel, ikke en konfigurations-/forsøgsrunner.
+
+Dette er **retrospektivt, ikke strikt prospektivt**: historiske labels er hentet senere og kan være revideret; positioner og kampplan er fra aktuelle versioner. Holdtilknytning udledes af tidligere observerede kampe; flyttede/ufuldstændige kampmængder udelades. Den aktuelle spillerpulje og det konservative dækningskrav giver udvælgelsesbias; kun tre test-GWs giver stadig et kort grundlag. Historiske snapshots og en længere urørt testperiode mangler for stærkere konklusioner.
 
 Freeze/readiness bevares som separat kvalitetsspor og blokerer ikke prototypen. Se `notes/prospective_freeze.md` og `notes/label_contracts.md`.
 
@@ -56,7 +76,7 @@ Freeze/readiness bevares som separat kvalitetsspor og blokerer ikke prototypen. 
 
 Implementeret: immutable adapters/snapshots, versionerede labels, as-of/outcome-selektion, readiness/freeze samt ovenstående baseline, simulation, optimizer, CLI, Streamlit og mini-evaluering. Modelkode ligger i `src/fpl_model/`, adskilt fra UI.
 
-De ældre `models/minutes.py`, `attack.py`, `defcon.py` og `team_goals.py` er stadig scaffold; prototypens komponentlogik ligger i `models/baseline.py` og `simulation.py`. Der er ingen trænet ML-model. Transfers, chips, fler-GW-planlægning, Core/odds/Elo i prognoser, fuld spillerhistorik og dokumenteret kalibrering er senere arbejde.
+De ældre `models/minutes.py`, `attack.py`, `defcon.py` og `team_goals.py` er stadig scaffold; prototypens komponentlogik ligger i `models/baseline.py` og `simulation.py`. Der er ingen trænet ML-model. Transfers, chips, fler-GW-planlægning, Core/odds/Elo i prognoser og dokumenteret kalibrering er senere arbejde.
 
 ```bash
 .venv/bin/python -m pytest -q

@@ -55,7 +55,7 @@ def _stat_errors(history):
     return errors
 
 
-def normalize_snapshot(snapshot, *, season, element_ids):
+def normalize_snapshot(snapshot, *, season, element_ids, allow_missing=False):
     """Return accepted labels, unusable quarantine and explicit coverage/quality.
 
     One snapshot supplies all context. The caller names the season; an existing
@@ -70,8 +70,12 @@ def normalize_snapshot(snapshot, *, season, element_ids):
     if manifest.get('run_metadata', {}).get('season', season) != season:
         raise ValueError('Snapshot season differs from requested season')
 
+    invalid_paths={e['relative_path'] for e in manifest['failures'] if e.get('error_code')=='invalid_payload' and e.get('relative_path')}
+    def entries_for(suffix):
+        return [e for e in manifest['files'] if e['source'] == 'fpl_api' and e['relative_path'].endswith('/' + suffix) and e['outcome'] == 'success' and e['relative_path'] not in invalid_paths]
+
     def read(suffix):
-        entries = [e for e in manifest['files'] if e['source'] == 'fpl_api' and e['relative_path'].endswith('/' + suffix) and e['outcome'] == 'success']
+        entries = entries_for(suffix)
         if len(entries) != 1:
             raise ValueError('Missing or ambiguous official capture: ' + suffix)
         entry = entries[0]
@@ -88,6 +92,14 @@ def normalize_snapshot(snapshot, *, season, element_ids):
     accepted, quarantine, coverage = [], [], []
     membership_differences = []
     for pid in ids:
+        suffix=f'element_summary/{pid}.json'
+        records=[e for e in [*manifest['files'],*manifest['failures']] if e['source']=='fpl_api' and e.get('request_context',{}).get('element_id')==str(pid)]
+        attempted=any(e.get('outcome')!='skipped' for e in records)
+        if allow_missing and not entries_for(suffix):
+            coverage.append(dict(player_id=pid,history_rows=None,states={},attempted=attempted,
+                history_status='request_failed' if attempted else ('deferred' if records else 'not_requested'),
+                failure_codes=sorted({e['error_code'] for e in records if e.get('error_code')})))
+            continue
         payload, history_meta = read(f'element_summary/{pid}.json')
         if history_meta.get('request_context', {}).get('element_id') != str(pid):
             raise ValueError('History provenance element ID disagrees with request')
@@ -147,13 +159,19 @@ def normalize_snapshot(snapshot, *, season, element_ids):
                 raise ValueError('Normalized official value changed')
             accepted.append(row)
             state_counts[state.value] += 1
-        coverage.append({'player_id': pid, 'history_rows': len(history), 'states': dict(sorted(state_counts.items())),
+        coverage.append({'player_id': pid, 'history_rows': len(history), 'states': dict(sorted(state_counts.items())), 'attempted':True,
+                         'retrieved_at':history_meta['retrieved_at'],'available_at':available,
                          'history_status': 'empty_observed_history' if not history else 'rows_observed'})
     accepted.sort(key=lambda r: (r['player_id'], r['fixture_id']))
     quality = dict(schema_version=SCHEMA_VERSION, audit_id='step2c_' + manifest['run_id'],
                    source_snapshot_id=manifest['run_id'], season=season, snapshot_path=str(root),
                    manifest_sha256=hashlib.sha256((root/'manifest.json').read_bytes()).hexdigest(),
                    requested_element_ids=list(ids), players=coverage,
+                   attempted_players=sum(p['attempted'] for p in coverage),
+                   successful_responses=sum(p['history_rows'] is not None for p in coverage),
+                   failed_players=[p['player_id'] for p in coverage if p['history_status']=='request_failed'],
+                   missing_response_players=[p['player_id'] for p in coverage if p['history_rows'] is None],
+                   deferred_players=[p['player_id'] for p in coverage if p['history_status']=='deferred'],
                    accepted_rows=len(accepted), quarantined_rows=len(quarantine),
                    label_states=dict(sorted(Counter(r['label_state'] for r in accepted + quarantine).items())),
                    explicit_zero_minute_rows=sum(r['minutes'] == 0 for r in accepted),

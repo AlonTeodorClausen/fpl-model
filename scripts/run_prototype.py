@@ -9,7 +9,7 @@ if __package__ in {None,''}:
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from fpl_model.models.baseline import BaselineConfig
 from fpl_model.prototype_data import load_data, snapshot_paths
-from fpl_model.prototype import run_prototype
+from fpl_model.prototype import run_prototype, save_run
 from fpl_model.label_contracts import utc
 
 
@@ -35,17 +35,14 @@ def main(argv=None):
     event=args.event or min(upcoming)
     report,_,_=run_prototype(data,event,BaselineConfig(prior_games=args.prior_games,attack_scale=args.attack_scale),
                              draws=args.draws,seed=args.seed,budget=args.budget,locked=args.locked,excluded=args.excluded)
-    out=args.output or Path('artifacts/prototype')/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-    if any(out.resolve().is_relative_to(root) for root in (args.raw_root.resolve(),Path(data['snapshot_path']))):
+    if args.output and args.output.resolve().is_relative_to(args.raw_root.resolve()):
         raise ValueError('Outputs cannot be written into raw storage')
-    out.mkdir(parents=True,exist_ok=False)
-    (out/'report.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,allow_nan=False)+'\n')
-    import pandas as pd
-    pd.DataFrame(report['players']).to_csv(out/'players.csv',index=False)
+    out=save_run(report,args.output)
     lookup={r['player_id']:r for r in report['players']}
     print(json.dumps(dict(output=str(out.resolve()),event=event,players=len(report['players']),
         cost=report['team']['cost'],captain=lookup[report['team']['captain']]['name'],
-        team_distribution=report['team_distribution'],evaluation={k:v for k,v in report['evaluation'].items() if k!='rows'}),indent=2,ensure_ascii=False))
+        team_distribution=report['team_distribution'],evaluation={k:report['evaluation'][k]
+            for k in ('status','n','player_count','gameweeks','model','reference','minutes','dnp','excluded_counts')}),indent=2,ensure_ascii=False))
     return 0
 
 
