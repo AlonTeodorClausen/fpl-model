@@ -1,0 +1,8 @@
+# Minimal direct runtime/test dependencies used for the local example.
+# No training or alternate solver packages required by this prototype.
+numpy==2.5.3
+scipy==1.18.1
+pandas==3.0.6
+streamlit==1.64.0
+requests==2.34.2
+pytest==9.1.1

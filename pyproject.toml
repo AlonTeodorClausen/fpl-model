@@ -15,6 +15,7 @@ dependencies = [
     "pulp>=2.8",
     "highspy>=1.7",
     "python-dotenv>=1.0",
+    "streamlit>=1.40",
 ]
 
 [project.optional-dependencies]

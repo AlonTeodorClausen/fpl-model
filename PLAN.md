@@ -1,3 +1,20 @@
+# Aktiv prioritet: kørbar FPL-prototype
+
+Den tidligere sekventielle plan nedenfor er historik, ikke en adgangsbarriere.
+Snapshot-, label-, as-of-, readiness- og freeze-kontrakterne er implementeret.
+Modelkomponenter, optimizer og walk-forward var scaffold ved denne omprioritering.
+
+1. **Kørbar CLI:** eksisterende officiel snapshot → enkel komponentbaseline → seedet simulation → lovlig 15-mandstrup, XI og anfører → scenariepoint med autosubs.
+2. **Lokal Streamlit-app:** snapshot/GW, budget, modelantagelser, lås/udeluk, spillertabel, fordelinger og hold. Ingen modelkode i UI.
+3. **Første evaluering:** samme kronologiske sample for baseline og historisk middel-reference. Senere hentede historiske labels markeres retrospektive; ingen historiske sæsonaggregater som input.
+
+Alle tre prototypeleverancer er nu implementeret; startkommandoer og begrænsninger står i README.md. Den første reelle kørsel anvender det eksisterende snapshot fra 21. september 2026. Fortsat arbejde prioriterer bedre spilletid/kampdækning og evaluering før transfers og chips.
+
+Kvalitetssporet (deadline-freeze og prospektiv validering) fortsætter separat.
+Ingen nye auditlag, Core-joins, transfers eller chips er nødvendige for prototypen.
+
+---
+
 # Implementeringsplan: probabilistisk FPL-model på gratis data
 
 Dato: 2026-09-13. Status: repositorygennemgang og plan; ingen modelkode ændret.
