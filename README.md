@@ -83,3 +83,9 @@ De ældre `models/minutes.py`, `attack.py`, `defcon.py` og `team_goals.py` er st
 ```
 
 Default-tests er offline og omfatter scoring, lovlighed, autosubs, lækage, reproducerbarhed og appens fulde kæde. Rå snapshots og genererede resultater forbliver gitignored.
+
+### Spillerforklaringer og minutdiagnostik
+
+Kør prototypen på det eksisterende snapshot og vælg en spiller under **Spillere og fordelinger**. Forklaringen viser historik, start/indhop/DNP, xG/xA-priorer og udglatning, skades-/kampjustering samt pointkomponenter fra præcis samme simulation. Under **Evaluering** vises minut-bias/MAE/RMSE mod reference efter position og historik før forecast, både hele evalueringspuljen og en eksplicit regelmæssig gruppe. Alt gemmes i den nye kørselsrapport; tidligere resultater overskrives ikke. Modellen er fortsat `component_baseline_v1`.
+
+Definitioner, fund og én anbefalet efterfølgende ændring: [notes/minutes_diagnostics.md](notes/minutes_diagnostics.md).

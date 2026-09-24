@@ -6,6 +6,7 @@ import numpy as np
 from fpl_model.label_contracts import utc
 from fpl_model.history_coverage import history_window
 from fpl_model.simulation import simulate
+from fpl_model.diagnostics import minute_diagnostics
 
 MODEL_VERSION='component_baseline_v1'
 EVALUATION_VERSION='chronological_coverage_v2'
@@ -96,6 +97,7 @@ def evaluate_sample(data, config, *, draws=1000, seed=42):
         config=asdict(config),draws=draws,seed=seed,snapshot_id=data['snapshot_id'],
         manifest_sha256=data.get('manifest_sha256'),player_count=len({r['player_id'] for r in records}),
         gameweeks=sorted({r['event'] for r in records}),rows=records,
+        minute_diagnostics=minute_diagnostics(records,data,config),
         by_position=[dict(position=p,**_metrics([r for r in records if r['position']==p])) for p in sorted({r['position'] for r in records})],
         by_gameweek=[dict(event=e,**_metrics([r for r in records if r['event']==e])) for e in sorted({r['event'] for r in records})],
         excluded=excluded,excluded_counts=dict(sorted(Counter(r['reason'] for r in excluded).items())),

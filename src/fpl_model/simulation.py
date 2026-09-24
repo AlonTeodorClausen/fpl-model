@@ -9,7 +9,8 @@ import numpy as np
 
 from fpl_model.label_contracts import utc
 from fpl_model.models.baseline import player_parameters, fixture_goal_means
-from fpl_model.scoring import score_points
+from fpl_model.scoring import score_components
+from fpl_model.diagnostics import history_summary
 from fpl_model.history_coverage import history_window
 
 
@@ -21,6 +22,7 @@ class Simulation:
     parameters: dict
     event: int
     seed: int | None
+    explanations: dict
 
     def summary(self):
         rows = []
@@ -53,7 +55,7 @@ def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False)
                  and (not retrospective or r['event'] < event)
                  and (retrospective or (r.get('available_at') is not None
                                        and utc(r['available_at']) <= cutoff))]
-    params = {}
+    params = {}; explanations = {}
     for p in players:
         own=[r for r in histories if r['player_id']==p['id']]
         coverage=history_window(own,past,p['team'])
@@ -64,8 +66,14 @@ def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False)
         if not coverage['usable']:
             par['fallbacks']=sorted(set(par['fallbacks']+[coverage['state']]))
         params[p['id']]=par
+        explanations[p['id']]=dict(**par['explanation'],
+            captured_history=history_summary(own),history_coverage=coverage['state'],
+            basis=par['basis'],fallbacks=par['fallbacks'],
+            p_start=par['p_start'],p_sub=par['p_sub'],p_dnp=1-par['p_start']-par['p_sub'],
+            start_minutes=par['start_minutes'],sub_minutes=par['sub_minutes'],
+            fixtures=[],point_components={key:0. for key in score_components(p['element_type'],minutes=0)})
     for f in sorted((f for f in data['fixtures'] if f.get('event')==event), key=lambda f:f['id']):
-        lambdas = fixture_goal_means(f,past,config)
+        lambdas, context = fixture_goal_means(f,past,config,with_context=True)
         # Same opponent goal times for every teammate. This models clean-sheet correlation.
         goal_times = {}
         for team, lam in zip((f['team_h'],f['team_a']),lambdas):
@@ -91,7 +99,19 @@ def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False)
             sampled = {key:rng.poisson(par[key]*exposure*(attack_factor if key in ('goals','assists') else 1))
                        for key in ('goals','assists','saves','defensive_contribution','penalties_saved','penalties_missed','own_goals')}
             sampled['bonus'] = rng.binomial(3,np.clip(par['bonus']*exposure/3,0,1))
-            pts = score_points(pos, minutes=mins, goals_conceded=conceded,
+            components = score_components(pos, minutes=mins, goals_conceded=conceded,
                                red_cards=red,yellow_cards=yellow,**sampled)
+            pts = sum(components.values())
+            e=explanations[p['id']]
+            for key,value in components.items(): e['point_components'][key]+=float(np.asarray(value).mean())
+            e['fixtures'].append(dict(**context[own_team_idx],fixture_id=f['id'],opponent_team_id=opponent,
+                home=own_team_idx==0,own_goal_mean=lambdas[own_team_idx],
+                opponent_goal_mean=lambdas[1-own_team_idx],
+                league_goal_base=(config.home_goals+config.away_goals)/2,
+                attack_scale=config.attack_scale,attack_factor=attack_factor))
             points[:,i] += pts.astype(np.int32); minutes[:,i] += mins
-    return Simulation(players,points,minutes,params,event,seed)
+    for i,p in enumerate(players):
+        explanations[p['id']]['expected_points']=float(points[:,i].mean())
+        explanations[p['id']]['expected_minutes']=float(minutes[:,i].mean())
+        explanations[p['id']]['p_no_play_gw']=float((minutes[:,i]==0).mean())
+    return Simulation(players,points,minutes,params,event,seed,explanations)

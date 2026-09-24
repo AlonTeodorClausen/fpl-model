@@ -42,3 +42,11 @@ def test_app_shows_coverage_and_grouped_evaluation_without_fetching(monkeypatch,
     assert any('Pr. position' in e.value for e in app.markdown)
     assert any('Pr. gameweek' in e.value for e in app.markdown)
     assert any('Brier' in e.value for e in app.markdown)
+    assert any('Spillerforklaring' in e.value for e in app.markdown)
+    assert any('Minutdiagnostik' in e.value for e in app.markdown)
+    assert any('regelmæssig' in e.value.lower() for e in app.markdown)
+    assert any('dobbelt' in e.value for e in app.markdown)
+    player_picker=next(w for w in app.selectbox if w.label=='Pointfordeling for spiller')
+    player_picker.set_value(5).run(timeout=30)
+    assert not app.exception
+    assert app.session_state['result'][1].explanations[5]['history']['dnp_frequency']==1

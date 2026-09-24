@@ -15,6 +15,7 @@ from fpl_model.models.baseline import BaselineConfig
 from fpl_model.prototype_data import load_data, snapshot_paths
 from fpl_model.prototype import run_prototype, save_run
 from fpl_model.backtest.walk_forward import EVALUATION_VERSION
+from fpl_model.diagnostics import DIAGNOSTICS_VERSION
 
 st.set_page_config(page_title='FPL Lab',page_icon='⚽',layout='wide')
 st.title('FPL Lab · én gameweek')
@@ -65,7 +66,7 @@ locked=st.sidebar.multiselect('Lås i trup',list(labels),format_func=labels.get)
 excluded=st.sidebar.multiselect('Udeluk',list(labels),format_func=labels.get)
 config=BaselineConfig(prior_games=prior,minutes_prior_games=minute_prior,starter_minutes=start_minutes,
                       attack_scale=attack,home_goals=home,away_goals=away,injury_unknown_factor=injury)
-signature=(EVALUATION_VERSION,str(chosen),event,budget,draws,int(seed),config,tuple(locked),tuple(excluded),bench_weight)
+signature=(DIAGNOSTICS_VERSION,EVALUATION_VERSION,str(chosen),event,budget,draws,int(seed),config,tuple(locked),tuple(excluded),bench_weight)
 if st.button('Kør prognose, simulation og optimering',type='primary'):
     try:
         with st.spinner('Simulerer spillere, vælger lovligt hold og evaluerer i nye scenarier …'):
@@ -113,6 +114,50 @@ with players_tab:
     i=next(i for i,p in enumerate(simulation.players) if p['id']==pid)
     values,counts=np.unique(simulation.points[:,i],return_counts=True)
     st.bar_chart(pd.DataFrame({'Point':values,'Sandsynlighed':counts/len(simulation.points)}).set_index('Point'))
+    st.write('**Spillerforklaring · component_baseline_v1**')
+    explanation=report['player_explanations'][pid]
+    h=explanation['captured_history']
+    st.write(f"Historik: {h['matches']} kampe, {h['minutes']} minutter; "
+             f"{h['first_kickoff_at'] or 'ukendt'} → {h['last_kickoff_at'] or 'ukendt'}; GW {h['events']}.")
+    st.caption(f"Datagrundlag: {explanation['basis']} · dækning: {explanation['history_coverage']}")
+    if explanation['basis']!='player_fixture_history':
+        st.warning('Historikfrekvenserne nedenfor beskriver kun de hentede rækker og er ikke en sikker nævner. '
+                   'Modellen bruger i stedet sæsonaggregater/proxy eller eksplicitte priors som angivet.')
+    st.dataframe(pd.DataFrame([
+        {'Udfald':label,'Observeret frekvens':h[field],'Prior':explanation[prior_key],
+         'Model før skadesfaktor':before,'Model efter skadesfaktor':explanation[model_key],
+         'Betingede minutter (normalfordelingens centrum)':conditional}
+        for label,field,prior_key,before,model_key,conditional in [
+            ('Start','start_frequency','prior_start',explanation['pre_injury_start'],'p_start',explanation['start_minutes']),
+            ('Indhop','sub_frequency','prior_sub',explanation['pre_injury_sub'],'p_sub',explanation['sub_minutes']),
+            ('DNP','dnp_frequency','prior_dnp',1-explanation['pre_injury_start']-explanation['pre_injury_sub'],'p_dnp',0)]]),hide_index=True)
+    st.caption('Sandsynligheder er pr. kamp. Minutter trækkes fra en afrundet, afklippet normalfordeling '
+               '(start: σ=8, 1–90; indhop: σ=9, 1–59). Centret er derfor ikke præcis det simulerede gennemsnit. '
+               'Observerede starter forbliver ukendte ved manglende starts; modellens evt. 60-minuttersproxy er en fallback.')
+    st.write(f"Spilletidsprior: {explanation['minutes_prior_games']} kamp(e); "
+             f"priorcentre start/indhop: {explanation['conditional_minutes_prior']}. "
+             f"Skadesfaktor: {explanation['injury_factor']:.2f}. "
+             f"Simuleret GW: {explanation['expected_minutes']:.2f} minutter; DNP {explanation['p_no_play_gw']:.1%}.")
+    st.dataframe(pd.DataFrame([{'Rate':label,**explanation['rates'][key]}
+                              for label,key in [('xG → mål','goals'),('xA → assists','assists')]]),hide_index=True)
+    st.caption('Observeret pr. 90 bruger kun minutter i rækker med kendt felt; ukendt er ikke nul. '
+               'Udglatning = (observeret sum + prior_90s × prior_per90) / (eksponering + prior_90s). '
+               'Aggregate-fallback bruger i stedet bootstrap-sæsonsummer; de er ikke kampvis historik.')
+    st.write('**Hold- og modstanderjustering pr. kamp**')
+    st.dataframe(pd.DataFrame(explanation['fixtures']),hide_index=True)
+    st.caption('Målmiddel = venue_goal_base × team_attack × opponent_defence, afklippet til [0,15; 4,5]. '
+               'Offensiv faktor = målmiddel / league_goal_base × attack_scale, anvendt på både xG- og xA-raten.')
+    st.write('**Forventede pointkomponenter · samme simulation**')
+    component_names={'appearance':'Spilletid','goals':'Mål','assists':'Assists','clean_sheets':'Clean sheets',
+        'goals_conceded':'Indkasserede mål','saves':'Redninger','defensive_contribution':'Defensive bidrag',
+        'penalties_saved':'Straffesparksredninger','penalties_missed':'Brændte straffespark',
+        'yellow_cards':'Gule kort','red_cards':'Røde kort','own_goals':'Selvmål','bonus':'Bonus'}
+    st.dataframe(pd.DataFrame([{'Komponent':component_names[k],'Point':v}
+        for k,v in explanation['point_components'].items()]+[
+        {'Komponent':'Total','Point':explanation['expected_points']}]),hide_index=True)
+    st.caption(f"Afstemningsdifference: {sum(explanation['point_components'].values())-explanation['expected_points']:.12f}. "
+               'Alle værdier er gennemsnit af de samme scenarier; ingen ny simulation til forklaringen.')
+    st.write('Fallback-antagelser: '+(', '.join(explanation['fallbacks']) or 'Ingen'))
     st.download_button('Download spillertabel (CSV)',frame.to_csv(index=False),'players.csv','text/csv')
 with squad_tab:
     order=team['starters']+team['bench']
@@ -145,6 +190,40 @@ with eval_tab:
         st.write(f"**Ingen spilletid:** Brier {dnp['brier']:.4f}; reference {dnp['reference_brier']:.4f}. "
                  f"Forventet andel {dnp['predicted_rate']:.1%}, observeret {dnp['observed_rate']:.1%}. Lavere Brier er bedre.")
         st.dataframe(pd.DataFrame(dnp['bins']),hide_index=True)
+        st.write('**Minutdiagnostik · grupper fra historik før forecast**')
+        diagnostic=evaluation['minute_diagnostics']
+        st.caption('Regelmæssig tidligere spilletid: mindst 2 tidligere kampe, gennemsnit ≥60 minutter '
+                   'og spilletid i ≥75 % af kampene. Hele puljen betyder alle evaluerbare rækker; '
+                   'spillere med utilstrækkelig historik er stadig udeladt. Positiv bias = overvurdering.')
+        groups=[dict(group='Hele evalueringspuljen',**diagnostic['scopes']['all']),
+                dict(group='Regelmæssig tidligere spilletid',**diagnostic['scopes']['regular'])]
+        for title,rows in [('Pulje',groups),('Minutter pr. position',diagnostic['by_position']),
+            ('Tidligere startfrekvens',diagnostic['by_start_history']),('Tidligere gennemsnitsminutter',diagnostic['by_minute_history']),
+            ('Regelmæssig spilletid pr. position',diagnostic['regular_by_position']),
+            ('Position × tidligere starter',diagnostic['by_position_start_history'])]:
+            st.write('**'+title+'**')
+            view=[]
+            for row in rows:
+                for method in ('model','reference'):
+                    view.append({k:v for k,v in row.items() if k not in ('model','reference')} |
+                                {'metode':method,**(row[method] or {})})
+            st.dataframe(pd.DataFrame(view),hide_index=True)
+        start_groups={r['group']:r for r in diagnostic['by_start_history']}
+        if 'never_started' in start_groups and 'regular_starter' in start_groups:
+            reserve=start_groups['never_started'];regular=start_groups['regular_starter']
+            st.write(f"Ingen tidligere starter: bias {reserve['model']['bias']:+.2f} minutter; "
+                     f"modellen giver {reserve['model_start']:.1%} startchance mod {reserve['observed_start']:.1%} tidligere. "
+                     f"Regelmæssige startere: bias {regular['model']['bias']:+.2f}; "
+                     f"model {regular['model_start']:.1%} mod {regular['observed_start']:.1%} tidligere.")
+        st.caption('Fælles prior trækker start-/indhopfrekvenser mod 45 % / 10 % ved standardindstillinger. '
+                   'Det kan løfte reserver og sænke faste startere. Kort historik, skiftende roller, '
+                   'manglende historiske skadesoplysninger og afklipning af minutter kan også bidrage. '
+                   'Anbefalet næste enkeltændring: afprøv en svagere fælles frekvensprior, mens '
+                   'prioren for betingede minutter fastholdes. Ingen variant eller tuning er implementeret.')
+        st.caption('Startergrupper: never_started = 0 %, occasional_starter = >0 og <75 %, '
+                   'regular_starter = ≥75 %; manglende starts vises separat. Minutgrupper: 0; (0,30); [30,60); ≥60. '
+                   'observed_start/sub er tidligere frekvenser; model_start/sub er udglattede sandsynligheder pr. kamp, '
+                   'ikke observerede udfald i mål-GW. Bias/MAE/RMSE måles i GW-minutter på identiske rækker.')
         with st.expander('Evalueringsrækker og udeladelser'):
             st.dataframe(pd.DataFrame(evaluation['rows']),hide_index=True)
             st.write(evaluation['excluded_counts'])
@@ -154,5 +233,10 @@ with eval_tab:
 with st.expander('Antagelser og afgrænsning'):
     st.write('Spilletid: start/indskiftning/DNP med udglattede frekvenser. xG/xA og øvrige hændelser: '
              'Poisson-rater udglattet mod eksplicitte positionspriors. Manglende felter vises i fallback-kolonnen.')
+    st.write('Risiko for dobbelt holdstyrke: spillerens historiske xG/xA pr. 90 afspejler allerede eget holds '
+             'angreb og de tidligere modstandere. Multiplikation med eget holds angrebsstyrke kan forstærke dette igen. '
+             'Modstander-/hjemmejusteringen er relativ til et ligagennemsnit, ikke spillerens historiske kampmix. '
+             'Priors og kort historik dæmper, men fjerner ikke risikoen. Formlen er uændret; dette er en strukturel '
+             'risiko, ikke et målt bevis på dobbeltregning.')
     for limitation in report['limitations']: st.write('• '+limitation)
 st.download_button('Download kørsel (JSON)',json.dumps(report,indent=2,ensure_ascii=False),'forecast.json','application/json')

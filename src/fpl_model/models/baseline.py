@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
+from fpl_model.diagnostics import history_summary
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,7 @@ def player_parameters(player, history, team_games, config, *, allow_aggregates=T
         elif player.get('status') in ('s','u','n') or player.get('removed'): factor = 0.
         elif player.get('status') in ('i','d'):
             factor = config.injury_unknown_factor; flags.append('unknown_injury_probability_prior')
-    rates = {}
+    rates = {}; rate_explanation = {}
     fields = {'goals':'expected_goals', 'assists':'expected_assists'}
     for key, default in prior.items():
         field = fields.get(key,key)
@@ -97,13 +98,24 @@ def player_parameters(player, history, team_games, config, *, allow_aggregates=T
         else:
             count = exposure = 0
         rates[key] = (count+config.prior_games*default)/(exposure+config.prior_games)
+        rate_explanation[key] = dict(field=field, count=float(count), exposure_90s=float(exposure),
+            known_rows=len(known) if history else None,
+            observed_per90=float(count/exposure) if exposure else None, prior_per90=default,
+            prior_90s=config.prior_games, smoothed_per90=float(rates[key]))
     if n < 3: flags.append('short_history_smoothed')
     return dict(**rates, p_start=float(p_start*factor), p_sub=float(p_sub*factor),
                 start_minutes=float(np.clip(start_mean,1,90)), sub_minutes=float(np.clip(sub_mean,1,59)),
-                history_rows=len(history), basis=basis, fallbacks=sorted(set(flags)))
+                history_rows=len(history), basis=basis, fallbacks=sorted(set(flags)),
+                explanation=dict(history=history_summary(history),rates=rate_explanation,
+                    injury_factor=float(factor),minutes_prior_games=k,
+                    prior_start=config.prior_start,prior_sub=config.prior_sub,
+                    prior_dnp=1-config.prior_start-config.prior_sub,
+                    pre_injury_start=float(p_start),pre_injury_sub=float(p_sub),
+                    frequency_denominator=n,model_start_count=float(starts),model_sub_count=float(subs),
+                    conditional_minutes_prior={'start':config.starter_minutes,'sub':config.sub_minutes}))
 
 
-def fixture_goal_means(fixture, past_fixtures, config):
+def fixture_goal_means(fixture, past_fixtures, config, *, with_context=False):
     base = (config.home_goals+config.away_goals)/2
     def rates(team):
         rows = [f for f in past_fixtures if team in (f['team_h'], f['team_a'])
@@ -113,4 +125,8 @@ def fixture_goal_means(fixture, past_fixtures, config):
         k = config.team_prior_games
         return (scored+k*base)/(len(rows)+k)/base, (conceded+k*base)/(len(rows)+k)/base
     ha, hd = rates(fixture['team_h']); aa, ad = rates(fixture['team_a'])
-    return float(np.clip(config.home_goals*ha*ad,.15,4.5)), float(np.clip(config.away_goals*aa*hd,.15,4.5))
+    means = (float(np.clip(config.home_goals*ha*ad,.15,4.5)), float(np.clip(config.away_goals*aa*hd,.15,4.5)))
+    if with_context:
+        return means, (dict(team_attack=ha,opponent_defence=ad,venue_goal_base=config.home_goals),
+                       dict(team_attack=aa,opponent_defence=hd,venue_goal_base=config.away_goals))
+    return means
