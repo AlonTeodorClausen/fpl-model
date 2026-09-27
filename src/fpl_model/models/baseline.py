@@ -19,10 +19,11 @@ class BaselineConfig:
     away_goals: float = 1.25
     team_prior_games: float = 5.0
     injury_unknown_factor: float = 0.25
+    frequency_prior_games: float = 1.0
 
     def __post_init__(self):
         if any(not math.isfinite(v) for v in self.__dict__.values()): raise ValueError('Finite assumptions required')
-        if min(self.prior_games, self.minutes_prior_games, self.team_prior_games, self.home_goals, self.away_goals) <= 0:
+        if min(self.prior_games, self.frequency_prior_games, self.minutes_prior_games, self.team_prior_games, self.home_goals, self.away_goals) <= 0:
             raise ValueError('Priors and goal means must be positive')
         if not 0 <= self.prior_start <= 1 or not 0 <= self.prior_sub <= 1-self.prior_start:
             raise ValueError('Invalid start/sub prior')
@@ -71,7 +72,7 @@ def player_parameters(player, history, team_games, config, *, allow_aggregates=T
             flags.append('aggregate_sub_appearance_proxy')
         start_mean, sub_mean = config.starter_minutes, config.sub_minutes
         basis = 'season_aggregates' if allow_aggregates and n else 'explicit_priors'
-    k = config.minutes_prior_games
+    k = config.frequency_prior_games
     p_start = (starts+k*config.prior_start)/(n+k)
     p_sub = (max(0,subs)+k*config.prior_sub)/(n+k)
     factor = 1.0
@@ -107,7 +108,8 @@ def player_parameters(player, history, team_games, config, *, allow_aggregates=T
                 start_minutes=float(np.clip(start_mean,1,90)), sub_minutes=float(np.clip(sub_mean,1,59)),
                 history_rows=len(history), basis=basis, fallbacks=sorted(set(flags)),
                 explanation=dict(history=history_summary(history),rates=rate_explanation,
-                    injury_factor=float(factor),minutes_prior_games=k,
+                    injury_factor=float(factor),minutes_prior_games=config.minutes_prior_games,
+                    frequency_prior_games=k,
                     prior_start=config.prior_start,prior_sub=config.prior_sub,
                     prior_dnp=1-config.prior_start-config.prior_sub,
                     pre_injury_start=float(p_start),pre_injury_sub=float(p_sub),
@@ -130,3 +132,10 @@ def fixture_goal_means(fixture, past_fixtures, config, *, with_context=False):
         return means, (dict(team_attack=ha,opponent_defence=ad,venue_goal_base=config.home_goals),
                        dict(team_attack=aa,opponent_defence=hd,venue_goal_base=config.away_goals))
     return means
+
+
+def model_version(config):
+    if config.frequency_prior_games == 1.0:
+        return 'component_baseline_v1'
+    return {0.25:'component_frequency_025_v1',0.10:'component_frequency_010_v1'}.get(
+        config.frequency_prior_games, 'component_frequency_custom_v1')

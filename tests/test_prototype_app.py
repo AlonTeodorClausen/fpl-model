@@ -50,3 +50,22 @@ def test_app_shows_coverage_and_grouped_evaluation_without_fetching(monkeypatch,
     player_picker.set_value(5).run(timeout=30)
     assert not app.exception
     assert app.session_state['result'][1].explanations[5]['history']['dnp_frequency']==1
+
+
+def test_app_can_show_saved_experiment_without_running_forecast(monkeypatch,tmp_path):
+    import json
+    import fpl_model.prototype_data as source
+    import fpl_model.minutes_experiment as experiments
+    from test_minutes_experiment import anchor
+    d,a=anchor();d['teams']=[dict(id=i,short_name=f'T{i}') for i in range(1,11)]
+    report=experiments.run_experiment(d,a,seeds=[42])
+    path=experiments.save_experiment(report,tmp_path/'experiment')/'comparison.json'
+    monkeypatch.setattr(source,'snapshot_paths',lambda root:[tmp_path])
+    monkeypatch.setattr(source,'load_data',lambda path:d)
+    assert hasattr(experiments,'comparison_paths')
+    monkeypatch.setattr(experiments,'comparison_paths',lambda root:[path])
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    assert not app.exception
+    assert any('udviklingsdata' in w.value.lower() for w in app.warning)
+    assert any('component_frequency_010_v1' in f.value.to_string() for f in app.dataframe)
+    assert any('minutes_bias' in f.value.columns for f in app.dataframe)

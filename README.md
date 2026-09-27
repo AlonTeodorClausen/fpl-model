@@ -89,3 +89,27 @@ Default-tests er offline og omfatter scoring, lovlighed, autosubs, lækage, repr
 Kør prototypen på det eksisterende snapshot og vælg en spiller under **Spillere og fordelinger**. Forklaringen viser historik, start/indhop/DNP, xG/xA-priorer og udglatning, skades-/kampjustering samt pointkomponenter fra præcis samme simulation. Under **Evaluering** vises minut-bias/MAE/RMSE mod reference efter position og historik før forecast, både hele evalueringspuljen og en eksplicit regelmæssig gruppe. Alt gemmes i den nye kørselsrapport; tidligere resultater overskrives ikke. Modellen er fortsat `component_baseline_v1`.
 
 Definitioner, fund og én anbefalet efterfølgende ændring: [notes/minutes_diagnostics.md](notes/minutes_diagnostics.md).
+
+### Afgrænset eksperiment: tre frekvenspriorer
+
+Kør offline mod den eksisterende baseline-rapport (ingen AI-kald eller downloads):
+
+```bash
+.venv/bin/python scripts/compare_minutes_priors.py --reference-run artifacts/prototype/20260924T164629668707Z_0c22d357/report.json
+```
+
+Dette sammenligner **1,0 / 0,25 / 0,10** i `frequency_prior_games`, med `minutes_prior_games=1,0` og alle øvrige antagelser fra rapporten uændret. Standarden er stadig 1,0/1,0. Den tidligere fælles sidebar-kontrol styrer nu kun betingede minutter; frekvensprioren i den almindelige app-prognose forbliver 1,0. Nye kandidatversioner betegnes `component_frequency_025_v1` og `component_frequency_010_v1`.
+
+Kommandoen validerer snapshot/manifest og præcis samme mål-/reference-rækker samt identisk baseline-reproduktion. Den bruger rapportens simulationsantal og primære seed plus to ekstra seeds; hvert GW bruger `seed + GW`. Gemte JSON/CSV-filer under `artifacts/minutes_experiments/` indeholder fulde rækker, konfiguration, model-/kodeversioner, alle gruppemål og parvise seed-forskelle. Eksisterende filer overskrives ikke. Genindlæs appen: **Tre frekvenspriorer · gemt udviklingseksperiment** kan ses uden at køre den almindelige prognose. Sidebarens antagelser ændrer ikke en gemt sammenligning.
+
+GW3–5 er **udviklingsdata**, allerede brugt til diagnostik. Seeds viser kun Monte Carlo-støj, ikke statistisk sikkerhed. Standarden ændres ikke automatisk. Se [resultater og afvejninger](notes/frequency_prior_experiment.md).
+
+Næste større modeludvidelse er **odds-integration**, ikke implementeret her: som alternativ/supplement til holdets målmodel, fjern bookmaker-margin, håndtér manglende markeder og observationstidspunkter eksplicit, og sammenlign med/uden odds. Aktuelle odds må aldrig indsættes i historiske forecasts.
+
+Allerede gemte seeds kan sammenfattes **uden nye simulationer eller snapshotlæsning**:
+
+```bash
+.venv/bin/python scripts/compare_minutes_priors.py --saved-comparison artifacts/minutes_experiments/20260924T172721154282Z_40fcacf6/comparison.json
+```
+
+Det opretter en ny rapport med kildefilens checksum, uændrede kørsler og `seed_summary.csv`. Appen viser gennemsnit [min–maks] over seeds, både samlet og for regelmæssige spillere, og fremhæver forværrede gruppemål. Antal observationer ganges ikke med antal seeds. Spændet viser simulationsvariation, ikke statistisk usikkerhed på tværs af kampe.

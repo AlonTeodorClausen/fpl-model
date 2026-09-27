@@ -16,6 +16,7 @@ from fpl_model.prototype_data import load_data, snapshot_paths
 from fpl_model.prototype import run_prototype, save_run
 from fpl_model.backtest.walk_forward import EVALUATION_VERSION
 from fpl_model.diagnostics import DIAGNOSTICS_VERSION
+from fpl_model.minutes_experiment import comparison_paths, summarize_seeds, EXPERIMENT_VERSION
 
 st.set_page_config(page_title='FPL Lab',page_icon='⚽',layout='wide')
 st.title('FPL Lab · én gameweek')
@@ -55,7 +56,7 @@ draws=st.sidebar.select_slider('Scenarier',options=[500,1000,3000,10000],value=3
 seed=st.sidebar.number_input('Random seed',min_value=0,max_value=2147483647,value=42,step=1)
 with st.sidebar.expander('Centrale modelantagelser'):
     prior=st.number_input('Rate-prior: kampe',min_value=.1,max_value=30.,value=3.,step=.5)
-    minute_prior=st.number_input('Spilletids-prior: kampe',min_value=.1,max_value=20.,value=1.,step=.5)
+    minute_prior=st.number_input('Betingede minutter: priorstyrke',min_value=.1,max_value=20.,value=1.,step=.5)
     start_minutes=st.slider('Minutter ved start (prior)',45,90,82)
     attack=st.slider('Angrebsrate ×',.3,2.,1.,.05)
     home=st.slider('Hjemmeholdets mål-prior',.5,3.,1.55,.05)
@@ -66,7 +67,7 @@ locked=st.sidebar.multiselect('Lås i trup',list(labels),format_func=labels.get)
 excluded=st.sidebar.multiselect('Udeluk',list(labels),format_func=labels.get)
 config=BaselineConfig(prior_games=prior,minutes_prior_games=minute_prior,starter_minutes=start_minutes,
                       attack_scale=attack,home_goals=home,away_goals=away,injury_unknown_factor=injury)
-signature=(DIAGNOSTICS_VERSION,EVALUATION_VERSION,str(chosen),event,budget,draws,int(seed),config,tuple(locked),tuple(excluded),bench_weight)
+signature=(EXPERIMENT_VERSION,DIAGNOSTICS_VERSION,EVALUATION_VERSION,str(chosen),event,budget,draws,int(seed),config,tuple(locked),tuple(excluded),bench_weight)
 if st.button('Kør prognose, simulation og optimering',type='primary'):
     try:
         with st.spinner('Simulerer spillere, vælger lovligt hold og evaluerer i nye scenarier …'):
@@ -77,6 +78,85 @@ if st.button('Kør prognose, simulation og optimering',type='primary'):
     except (ValueError,RuntimeError,OSError) as exc:
         st.error(str(exc))
         st.session_state.pop('result',None)
+# Loading a saved comparison never runs an experiment or downloads data.
+@st.cache_data(show_spinner=False)
+def read_comparison(path):
+    return json.loads(Path(path).read_text())
+
+with st.expander('Tre frekvenspriorer · gemt udviklingseksperiment',expanded=True):
+    st.warning('GW3–5 er udviklingsdata, allerede brugt til diagnostik. Ingen uafhængig testperformance '
+               'eller statistisk sikker forbedring. Standardmodellen er ikke ændret.')
+    comparisons=[]
+    for path in comparison_paths(ROOT/'artifacts/minutes_experiments'):
+        try:
+            candidate=read_comparison(str(path))
+            if candidate['snapshot_id']==data['snapshot_id'] and candidate.get('manifest_sha256')==data.get('manifest_sha256'):
+                comparisons.append(path)
+        except (OSError,ValueError,KeyError):
+            st.warning(f'Kunne ikke læse gemt sammenligning: {path.name}')
+    if comparisons:
+        comparison_path=st.selectbox('Gemt prior-eksperiment',comparisons,format_func=lambda p:p.parent.name)
+        comparison=read_comparison(str(comparison_path))
+        st.caption(f"{comparison['n']} spiller-GW-rækker · GW {comparison['gameweeks']} · "
+                   f"{comparison['draws']} scenarier pr. GW · seeds {comparison['seeds']}. "
+                   'Frekvenspriorer: 1,0 / 0,25 / 0,10; betingede minutter: 1,0 for alle. '
+                   'Sidebarens prognoseindstillinger ændrer ikke dette gemte eksperiment.')
+        metrics=pd.DataFrame(comparison['metrics'])
+        summary=pd.DataFrame(comparison.get('seed_summary') or summarize_seeds(comparison['metrics']))
+        labels_experiment={'component_baseline_v1':'Baseline 1,0','component_frequency_025_v1':'Prior 0,25',
+                           'component_frequency_010_v1':'Prior 0,10','historical_mean_reference':'Simpel reference'}
+        metric_names={'minutes_bias':'Minut-bias','minutes_mae':'Minut-MAE','minutes_rmse':'Minut-RMSE',
+            'point_mae':'Point-MAE','point_rmse':'Point-RMSE','dnp_brier':'DNP-Brier','point_crps':'CRPS',
+            'dnp_predicted':'DNP forudsagt','dnp_observed':'DNP observeret'}
+        def compact_table(rows):
+            view=[]
+            rows=rows.assign(_order=rows.model_version.map({name:i for i,name in enumerate(labels_experiment)})).sort_values(['group','_order'])
+            for _,row in rows.iterrows():
+                entry={'Variant':labels_experiment[row.model_version],'Gruppe':row.group,'n':row.n,'Spillere':row.players}
+                for key,label in metric_names.items():
+                    avg,lo,hi=(row[f'{key}_{suffix}'] for suffix in ('mean','min','max'))
+                    digits=4 if key.startswith('dnp') or key=='point_crps' else 3
+                    entry[label]=f'{avg:.{digits}f} [{lo:.{digits}f}–{hi:.{digits}f}]' if pd.notna(avg) else '—'
+                view.append(entry)
+            return pd.DataFrame(view)
+        st.caption('Alle tal nedenfor er gennemsnit [minimum–maksimum] over seeds. n tæller unikke evalueringsrækker, '
+                   'ikke gentagelser over seeds. Spændet er simulationsvariation, ikke statistisk usikkerhed på tværs af kampe.')
+        st.write('**Alle evalueringsrækker · gennemsnit og seed-spænd**')
+        st.dataframe(compact_table(summary[(summary.dimension=='scope')&(summary.group=='all')]),hide_index=True)
+        st.write('**Regelmæssig tidligere spilletid · gennemsnit og seed-spænd**')
+        st.caption(comparison['group_definitions']['regular_rule'])
+        regular_rows=summary[(summary.dimension=='scope')&(summary.group=='regular')]
+        st.dataframe(compact_table(regular_rows),hide_index=True)
+        baseline_regular=regular_rows[regular_rows.model_version=='component_baseline_v1'].iloc[0]
+        for _,candidate in regular_rows[regular_rows.model_version.isin(['component_frequency_025_v1','component_frequency_010_v1'])].iterrows():
+            worse=[f'{metric_names[key]}: {candidate[key+"_mean"]-baseline_regular[key+"_mean"]:+.4f}' for key in
+                   ('minutes_mae','minutes_rmse','dnp_brier','point_mae','point_rmse','point_crps')
+                   if pd.notna(candidate[key+'_mean']) and candidate[key+'_mean']>baseline_regular[key+'_mean']]
+            if worse:
+                st.warning(f"Regelmæssige spillere · {labels_experiment[candidate['model_version']]}: højere gennemsnitlig fejl end baseline — "+'; '.join(worse)+
+                           '. Samlede forbedringer må ikke skjule dette.')
+        dimensions={'position':'Position','gameweek':'Gameweek','start_history':'Tidligere starter',
+            'minute_history':'Tidligere minutter','regular_position':'Regelmæssige pr. position',
+            'position_start_history':'Position × tidligere starter'}
+        dimension=st.selectbox('Opdel eksperiment',list(dimensions),format_func=dimensions.get)
+        st.dataframe(compact_table(summary[summary.dimension==dimension]),hide_index=True)
+        st.caption('Positiv minut-bias = overvurdering. Referencens CRPS er for en punktfordeling og svarer til MAE; '
+                   'referencen har ingen kalibreret pointfordeling.')
+        with st.expander('Enkelt-seeds og rå gruppemål'):
+            selected_seed=st.selectbox('Eksperimentets seed',comparison['seeds'])
+            st.dataframe(metrics[metrics.seed==selected_seed],hide_index=True)
+        st.write('**Simulationsstøj: parvise forskelle over seeds**')
+        sensitivity=pd.DataFrame(comparison['seed_sensitivity'])
+        st.dataframe(sensitivity[sensitivity.dimension=='scope'],hide_index=True)
+        st.caption('Delta = kandidat minus sammenligningsmodel. Min/max er variationsbredde over seeds, '
+                   'ikke konfidensintervaller. Seeds bruger samme base_seed + GW-strategi, men ændrede '
+                   'Poisson-parametre betyder, at alle tilfældige træk ikke er parvist identiske.')
+        st.download_button('Download prior-eksperiment (JSON)',json.dumps(comparison,ensure_ascii=False),
+                           'minutes_comparison.json','application/json')
+    else:
+        st.info('Ingen gemt sammenligning for dette snapshot. Kør kommandoen med en eksisterende baseline-rapport:')
+    st.code('.venv/bin/python scripts/compare_minutes_priors.py --reference-run artifacts/prototype/<kørsel>/report.json',language='bash')
+
 if 'result' not in st.session_state:
     st.write('Vælg antagelser til venstre, og kør kæden. Den bruger eksisterende snapshots og virker uden FPL-netværksadgang.')
     st.stop()
@@ -134,7 +214,7 @@ with players_tab:
     st.caption('Sandsynligheder er pr. kamp. Minutter trækkes fra en afrundet, afklippet normalfordeling '
                '(start: σ=8, 1–90; indhop: σ=9, 1–59). Centret er derfor ikke præcis det simulerede gennemsnit. '
                'Observerede starter forbliver ukendte ved manglende starts; modellens evt. 60-minuttersproxy er en fallback.')
-    st.write(f"Spilletidsprior: {explanation['minutes_prior_games']} kamp(e); "
+    st.write(f"Frekvensprior: {explanation['frequency_prior_games']}; betingede minutter-prior: {explanation['minutes_prior_games']} kamp(e); "
              f"priorcentre start/indhop: {explanation['conditional_minutes_prior']}. "
              f"Skadesfaktor: {explanation['injury_factor']:.2f}. "
              f"Simuleret GW: {explanation['expected_minutes']:.2f} minutter; DNP {explanation['p_no_play_gw']:.1%}.")

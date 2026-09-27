@@ -10,7 +10,8 @@ from uuid import uuid4
 import numpy as np
 from fpl_model.simulation import simulate
 from fpl_model.optimizer.squad import optimize_squad, evaluate_squad
-from fpl_model.backtest.walk_forward import evaluate_sample, MODEL_VERSION
+from fpl_model.backtest.walk_forward import evaluate_sample
+from fpl_model.models.baseline import model_version
 
 
 def run_prototype(data, event, config, *, draws=3000, seed=None, budget=100,
@@ -25,7 +26,7 @@ def run_prototype(data, event, config, *, draws=3000, seed=None, budget=100,
     values = totals['points']
     report = dict(snapshot_id=data['snapshot_id'],as_of_at=data['as_of_at'],
         manifest_sha256=data.get('manifest_sha256'),coverage=data.get('coverage'),
-        model_version=MODEL_VERSION,created_at=datetime.now(timezone.utc).isoformat(),
+        model_version=model_version(config),created_at=datetime.now(timezone.utc).isoformat(),
         code_sha256={name:hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
             for name in ('diagnostics.py','models/baseline.py','simulation.py','scoring.py','history_coverage.py','backtest/walk_forward.py','optimizer/squad.py')},
         runtime_versions={'python':platform.python_version(),**{p:version(p) for p in ('numpy','scipy','pandas')}},
