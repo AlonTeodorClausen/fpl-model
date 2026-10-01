@@ -17,6 +17,7 @@ from fpl_model.prototype import run_prototype, save_run
 from fpl_model.backtest.walk_forward import EVALUATION_VERSION
 from fpl_model.diagnostics import DIAGNOSTICS_VERSION
 from fpl_model.minutes_experiment import comparison_paths, summarize_seeds, EXPERIMENT_VERSION
+from fpl_model.odds_comparison import comparison_paths as odds_comparison_paths
 
 st.set_page_config(page_title='FPL Lab',page_icon='⚽',layout='wide')
 st.title('FPL Lab · én gameweek')
@@ -156,6 +157,66 @@ with st.expander('Tre frekvenspriorer · gemt udviklingseksperiment',expanded=Tr
     else:
         st.info('Ingen gemt sammenligning for dette snapshot. Kør kommandoen med en eksisterende baseline-rapport:')
     st.code('.venv/bin/python scripts/compare_minutes_priors.py --reference-run artifacts/prototype/<kørsel>/report.json',language='bash')
+
+with st.expander('Odds til clean sheets og indkasserede mål · eksperiment',expanded=True):
+    st.caption('Separat, valgfri defensiv variant. Spilletid, egne mål/assists og offensive kampjusteringer '
+               'er uændrede. Kun clean sheets og pointfradrag for indkasserede mål bruger odds-rater. '
+               'component_baseline_v1 er fortsat standard. Ingen historisk GW3–5-evaluering med nye odds.')
+    odds_paths=odds_comparison_paths(ROOT/'artifacts/defensive_odds')
+    # Prefer real coverage/fallback to the explicitly synthetic demonstration.
+    odds_paths=sorted(odds_paths,key=lambda p:read_comparison(str(p))['kind']!='current_forecast_comparison')
+    if odds_paths:
+        odds_path=st.selectbox('Odds-sammenligning',odds_paths,format_func=lambda p:
+            ('SYNTETISK EKSEMPEL · ' if read_comparison(str(p))['kind']!='current_forecast_comparison' else 'Faktisk dækning · ')+p.parent.name)
+        odds_report=read_comparison(str(odds_path));oc=odds_report['coverage'];osource=oc['source']
+        if odds_report['kind']!='current_forecast_comparison':
+            st.warning('SYNTETISK OFFLINE-EKSEMPEL — opdigtede odds på én kamp. Ikke aktuelle bookmakerpriser eller en aktuel oddsprognose.')
+        else:
+            st.info('Prognosesammenligning, ikke dokumentation for hvilken model der er bedst. Udfaldene kan først evalueres efter runden.')
+        st.write(f"**Odds-dækning: {oc['usable']}/{oc['expected_fixtures']} kampe** · GW {odds_report['event']} · "
+                 f"{oc['premier_league_rows']} PL-rækker ud af {oc['total_source_rows']} kilderækker.")
+        st.caption(f"Forecast: {odds_report['forecast_origin_at']} · officiel deadline: {odds_report['deadline_at']} · "
+                   f"odds hentet: {osource.get('retrieved_at','ukendt')} · publikationstid: ukendt.")
+        st.caption(f"Spillerhistorik fra snapshot {odds_report['source_history_snapshot_id']}. "
+                   'Denne gemte sammenligning bruger sine egne kildereferencer og samme konfiguration/seed for begge varianter; sidebarændringer påvirker den ikke.')
+        st.write('**Holdmål og clean-sheet-sandsynligheder pr. kamp**')
+        fixtures=pd.DataFrame(oc['fixtures'])
+        fields=['fixture_id','team_h','team_a','kickoff_time','status','reason','baseline_home_goals','home_goals',
+                'baseline_away_goals','away_goals','baseline_home_clean_sheet','home_clean_sheet',
+                'baseline_away_clean_sheet','away_clean_sheet']
+        st.dataframe(fixtures[fields],hide_index=True)
+        st.caption('Clean-sheet-tal er exp(−modstanderens målrate) for hele kampen. Spillerpoint afhænger også af '
+                   'minutter og hændelser i spillerens tidsinterval. Tallene er modelafledte, ikke observerede sandheder.')
+        with st.expander('Markeder, fitafvigelser og kampmatching'):
+            st.write(oc['policy'])
+            st.caption('Inverse odds normaliseres separat i hvert komplet marked. To positive målparametre tilpasses '
+                       'med ligevægtet least squares mod 1X2 og over/under 2,5; maksimalt tilladt afvigelse 0,06. '
+                       'Ingen Max/Avg-blanding, asiatisk handicap eller spillerodds.')
+            st.json([f for f in oc['fixtures'] if f['status']=='odds'])
+            st.dataframe(pd.DataFrame(oc['matches']),hide_index=True)
+            st.json(osource)
+        st.write('**Ændrede spillerprognoser**')
+        changes=pd.DataFrame(odds_report['player_changes']).sort_values('xp_delta',key=lambda v:v.abs(),ascending=False)
+        st.dataframe(changes,hide_index=True)
+        st.caption('Defensive point omfatter clean sheets, indkasserede mål, redninger, defensive bidrag og '
+                   'straffesparksredninger. Kun de to første komponenter ændres. minutes_delta skal være nul; '
+                   'ændring i samlet xP skal være lig ændringen i defensive point.')
+        st.write('**Holdforslag med/uden odds**')
+        names={r['player_id']:r['name'] for r in odds_report['baseline']['players']}
+        st.dataframe(pd.DataFrame([dict(variant=key,model_version=odds_report[key]['model_version'],
+            captain=names[odds_report[key]['team']['captain']],
+            squad=', '.join(names[i] for i in odds_report[key]['team']['squad']),
+            starters=', '.join(names[i] for i in odds_report[key]['team']['starters']),
+            team_mean=odds_report[key]['team_distribution']['mean']) for key in ('baseline','odds_variant')]),hide_index=True)
+        st.write('Tilføjet:',[names[i] for i in odds_report['team_changes']['added']],
+                 '· Udgået:',[names[i] for i in odds_report['team_changes']['removed']])
+        for limitation in odds_report['limitations']:st.caption(limitation)
+        with st.expander('Officiel kontekst og oprindelige historiktidspunkter'):
+            st.json(odds_report.get('input_sources'))
+        st.download_button('Download odds-sammenligning (JSON)',json.dumps(odds_report,ensure_ascii=False),
+                           'defensive_odds_comparison.json','application/json')
+    else:
+        st.info('Ingen gemt odds-sammenligning. Brug scripts/compare_defensive_odds.py på eksisterende snapshots.')
 
 if 'result' not in st.session_state:
     st.write('Vælg antagelser til venstre, og kør kæden. Den bruger eksisterende snapshots og virker uden FPL-netværksadgang.')

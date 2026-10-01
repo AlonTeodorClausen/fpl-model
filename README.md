@@ -113,3 +113,22 @@ Allerede gemte seeds kan sammenfattes **uden nye simulationer eller snapshotlæs
 ```
 
 Det opretter en ny rapport med kildefilens checksum, uændrede kørsler og `seed_summary.csv`. Appen viser gennemsnit [min–maks] over seeds, både samlet og for regelmæssige spillere, og fremhæver forværrede gruppemål. Antal observationer ganges ikke med antal seeds. Spændet viser simulationsvariation, ikke statistisk usikkerhed på tværs af kampe.
+
+### Valgfri defensiv oddsvariant
+
+`component_defensive_odds_v1` bruger kun gyldige Bet365 1X2/O-U 2,5-markeder til clean sheets og indkasserede mål. Egne mål/assists, minutter og øvrige hændelser bevares. Baseline er standard. Manglende/uklare markeder, identiteter, kickoff eller tidsprovenance giver synlig fallback.
+
+Kør sammenligningen offline på de allerede hentede snapshots:
+
+```bash
+.venv/bin/python scripts/compare_defensive_odds.py \
+  --history-snapshot data/raw/2026-09-24_164002695814Z_4fee7b0047014ffba28b416e9b9928ce \
+  --context-snapshot data/raw/2026-09-27_104712135033Z_f5ca590694aa4e57ae515ce1a16362fa \
+  --odds-snapshot data/raw/2026-09-27_104712135033Z_f5ca590694aa4e57ae515ce1a16362fa \
+  --forecast-origin-at 2026-09-27T10:55:00Z --event 6 --draws 3000 --seed 42 \
+  --include-offline-example
+```
+
+Udelad `--forecast-origin-at` for en ny, eksplicit registreret kørselstid; brug passende eksisterende captures. Kommandoen henter ingen data. Det konkrete nye feed indeholder 0 PL-rækker, så 0/10 GW6-kampe får odds; det opdigtede eksempel markeres særskilt og er ikke en aktuel oddsprognose. Appsektionen **Odds til clean sheets og indkasserede mål** viser de gemte sammenligninger uafhængigt af sidebarens almindelige prognosevalg. Kun egentlige captures er kilde til en rigtig prognose; syntetiske eksempler er udelukket som dokumentation for performance.
+
+[Markedspolitik, verificerede aliaser, tidszoneevidens, fit og begrænsninger](notes/defensive_odds.md).

@@ -69,3 +69,27 @@ def test_app_can_show_saved_experiment_without_running_forecast(monkeypatch,tmp_
     assert any('udviklingsdata' in w.value.lower() for w in app.warning)
     assert any('component_frequency_010_v1' in f.value.to_string() for f in app.dataframe)
     assert any('minutes_bias' in f.value.columns for f in app.dataframe)
+
+
+def test_app_shows_odds_fallback_and_clearly_labels_synthetic_example(monkeypatch,tmp_path):
+    from test_defensive_odds import coverage_data
+    from fpl_model.defensive_odds import build_coverage
+    from fpl_model.models.baseline import BaselineConfig
+    import fpl_model.odds_comparison as odds
+    import fpl_model.prototype_data as source
+    d,_,meta=coverage_data();d['teams']=[dict(id=i,name=f'T{i}',short_name=f'T{i}') for i in range(1,11)]
+    config=BaselineConfig()
+    report=odds.compare_forecasts(d,build_coverage(d,[],meta,5,config,d['as_of_at']),config,draws=100)
+    a=odds.save_comparison(report,tmp_path/'actual')/'comparison.json'
+    demo=odds.synthetic_demo(d,5,config,draws=100)
+    b=odds.save_comparison(demo,tmp_path/'demo')/'comparison.json'
+    monkeypatch.setattr(source,'snapshot_paths',lambda root:[tmp_path])
+    monkeypatch.setattr(source,'load_data',lambda p:d)
+    monkeypatch.setattr(odds,'comparison_paths',lambda root:[a,b])
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    assert not app.exception
+    assert any('0/1' in e.value for e in app.markdown)
+    select=next(w for w in app.selectbox if w.label=='Odds-sammenligning')
+    select.set_value(b).run(timeout=30)
+    assert not app.exception
+    assert any('SYNTETISK' in e.value for e in app.warning)

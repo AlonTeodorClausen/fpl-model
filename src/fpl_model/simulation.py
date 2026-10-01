@@ -38,13 +38,18 @@ class Simulation:
         return rows
 
 
-def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False):
+def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False, defensive_odds=None):
     if not 100 <= draws <= 100000: raise ValueError('Use 100–100000 scenarios')
     events = {e['id']:e for e in data['events']}
     if event not in events: raise ValueError('Unknown official GW')
     deadline = utc(events[event]['deadline_time'])
     cutoff = deadline if retrospective else utc(data['as_of_at'])
     if not retrospective and cutoff > deadline: raise ValueError('Snapshot is after this GW deadline; use retrospective evaluation instead')
+    overrides={}
+    if defensive_odds is not None:
+        if retrospective: raise ValueError('Odds overlay is prohibited in historical evaluation')
+        from fpl_model.defensive_odds import eligible_overrides
+        overrides=eligible_overrides(defensive_odds,event,cutoff,deadline,data['fixtures'])
     rng = np.random.default_rng(seed)
     players = sorted(data['players'], key=lambda p:p['id'])
     points = np.zeros((draws,len(players)),dtype=np.int32)
@@ -80,6 +85,14 @@ def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False)
             counts = rng.poisson(lam,draws)
             times = rng.uniform(0,90,size=(draws,int(counts.max(initial=0))))
             goal_times[team] = np.where(np.arange(times.shape[1])[None,:] < counts[:,None],times,999)
+        if f['id'] in overrides:
+            # Always consume the original baseline RNG above: minute/attack draws
+            # stay bit-identical. Only defensive goal times use a separate stream.
+            defence_rng=np.random.default_rng(np.random.SeedSequence([seed,f['id'],271828]) if seed is not None else None)
+            for team,lam in zip((f['team_h'],f['team_a']),overrides[f['id']]):
+                counts=defence_rng.poisson(lam,draws)
+                times=defence_rng.uniform(0,90,size=(draws,int(counts.max(initial=0))))
+                goal_times[team]=np.where(np.arange(times.shape[1])[None,:]<counts[:,None],times,999)
         for i,p in enumerate(players):
             if p['team'] not in (f['team_h'],f['team_a']): continue
             par = params[p['id']]; pos = p['element_type']

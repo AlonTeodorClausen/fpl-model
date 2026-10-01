@@ -15,33 +15,37 @@ from fpl_model.models.baseline import model_version
 
 
 def run_prototype(data, event, config, *, draws=3000, seed=None, budget=100,
-                  locked=(), excluded=(), bench_weight=.1):
+                  locked=(), excluded=(), bench_weight=.1, defensive_odds=None, evaluate_history=True):
+    if defensive_odds is not None and evaluate_history:
+        raise ValueError('No historical evaluation for the defensive odds variant')
     seed = int(np.random.SeedSequence().generate_state(1)[0]) if seed is None else int(seed)
-    forecasts = simulate(data,event,config,draws=draws,seed=seed)
+    forecasts = simulate(data,event,config,draws=draws,seed=seed,defensive_odds=defensive_odds)
     table = forecasts.summary()
     team = optimize_squad(table,budget=budget,locked=locked,excluded=excluded,bench_weight=bench_weight)
     # Independent scenarios evaluate the fixed selected team, reducing MC selection optimism.
-    independent = simulate(data,event,config,draws=draws,seed=seed+1)
+    independent = simulate(data,event,config,draws=draws,seed=seed+1,defensive_odds=defensive_odds)
     totals = evaluate_squad(team,table,independent.points,independent.minutes>0)
     values = totals['points']
     report = dict(snapshot_id=data['snapshot_id'],as_of_at=data['as_of_at'],
         manifest_sha256=data.get('manifest_sha256'),coverage=data.get('coverage'),
-        model_version=model_version(config),created_at=datetime.now(timezone.utc).isoformat(),
+        model_version=model_version(config) if defensive_odds is None else 'component_defensive_odds_v1',created_at=datetime.now(timezone.utc).isoformat(),
         code_sha256={name:hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
-            for name in ('diagnostics.py','models/baseline.py','simulation.py','scoring.py','history_coverage.py','backtest/walk_forward.py','optimizer/squad.py')},
+            for name in ('defensive_odds.py','diagnostics.py','models/baseline.py','simulation.py','scoring.py','history_coverage.py','backtest/walk_forward.py','optimizer/squad.py')},
         runtime_versions={'python':platform.python_version(),**{p:version(p) for p in ('numpy','scipy','pandas')}},
         snapshot_path=data.get('snapshot_path'),event=event,config=asdict(config),draws=draws,
         seed=seed,team_evaluation_seed=seed+1,budget=budget,locked=sorted(locked),excluded=sorted(excluded),
         player_explanations=forecasts.explanations,players=table,team=team,team_distribution=dict(mean=float(values.mean()),
             p10=float(np.quantile(values,.1)),p50=float(np.quantile(values,.5)),p90=float(np.quantile(values,.9)),
             bench_mean=float(totals['bench_points'].mean()),captain_bonus_mean=float(totals['captain_bonus'].mean())),
-        evaluation=evaluate_sample(data,config,draws=min(draws,2000),seed=seed),
+        evaluation=evaluate_sample(data,config,draws=min(draws,2000),seed=seed) if evaluate_history else dict(status='not_run',rows=[]),
         model_status='preliminary_uncalibrated',
         limitations=['Independent minutes; no coherent real-team XI or GK exclusion.',
             'Shared opponent goal times for clean sheets/concessions. Independent player goals/assists need not sum to team goals.',
             'Bonus is a marginal 0–3 approximation, not a full BPS ranking; rare events are independent.',
             'Autosub evaluation follows participation/formation rules; bench objective is only weighted expected points.',
             'Current price budget is for a new squad; no selling values, transfers, hits or chips.'])
+    if defensive_odds is not None: report['defensive_odds']=defensive_odds
+    if 'input_sources' in data: report['input_sources']=data['input_sources']
     return report, forecasts, totals
 
 
