@@ -16,6 +16,7 @@ def main(argv=None):
     p.add_argument('--history-snapshot',required=True,type=Path)
     p.add_argument('--context-snapshot',required=True,type=Path)
     p.add_argument('--odds-snapshot',required=True,type=Path)
+    p.add_argument('--odds-source',choices=('football_data_uk','the_odds_api'),default='football_data_uk')
     p.add_argument('--forecast-origin-at',default=None)
     p.add_argument('--event',type=int)
     p.add_argument('--draws',type=int,default=3000)
@@ -28,7 +29,7 @@ def main(argv=None):
     upcoming=[e['id'] for e in data['events'] if utc(e['deadline_time'])>origin]
     event=args.event if args.event is not None else min(upcoming,default=None)
     if event not in upcoming:p.error('Select a GW whose verified official deadline is still in the future')
-    rows,source=load_odds(args.odds_snapshot);config=BaselineConfig()
+    rows,source=load_odds(args.odds_snapshot,source_name=args.odds_source);config=BaselineConfig()
     coverage=build_coverage(data,rows,source,event,config,origin.isoformat())
     result=compare_forecasts(data,coverage,config,draws=args.draws,seed=args.seed,budget=args.budget)
     out=save_comparison(result)

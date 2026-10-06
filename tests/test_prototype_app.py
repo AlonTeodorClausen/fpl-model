@@ -93,3 +93,28 @@ def test_app_shows_odds_fallback_and_clearly_labels_synthetic_example(monkeypatc
     select.set_value(b).run(timeout=30)
     assert not app.exception
     assert any('SYNTETISK' in e.value for e in app.warning)
+
+
+def test_app_shows_real_api_source_updates_and_xi_changes_without_network(monkeypatch,tmp_path):
+    from test_odds_api import api_context
+    from fpl_model.defensive_odds import build_coverage
+    from fpl_model.models.baseline import BaselineConfig
+    import fpl_model.odds_comparison as odds
+    import fpl_model.prototype_data as source
+    import requests
+    d,e,s=api_context()
+    d['teams']=[dict(id=i,name={1:'Man Utd',2:'Spurs'}.get(i,f'T{i}'),short_name=f'T{i}') for i in range(1,11)]
+    cfg=BaselineConfig();report=odds.compare_forecasts(d,build_coverage(d,[e],s,5,cfg,d['as_of_at']),cfg,draws=100)
+    path=odds.save_comparison(report,tmp_path/'api')/'comparison.json'
+    monkeypatch.setattr(source,'snapshot_paths',lambda root:[tmp_path])
+    monkeypatch.setattr(source,'load_data',lambda p:d)
+    monkeypatch.setattr(odds,'comparison_paths',lambda root:[path])
+    def forbidden(*a,**k):raise AssertionError('No app network')
+    monkeypatch.setattr(requests.sessions.Session,'request',forbidden)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    assert not app.exception
+    assert any('The Odds API' in x.value and 'williamhill' in x.value for x in app.markdown)
+    assert any('1/1' in x.value for x in app.markdown)
+    assert any('last_update' in str(f.value.columns) for f in app.dataframe)
+    assert any('XI' in x.value for x in app.markdown)
+    assert not any('SYNTETISK' in x.value for x in app.warning)

@@ -1,4 +1,4 @@
-"""Optional Bet365 defensive goal-rate overlay; never an offensive-rate input.
+"""Optional defensive goal-rate overlay; never an offensive-rate input.
 
 London local times and aliases are checked against exact official kickoffs.
 Evidence and limitations: notes/defensive_odds.md. No fuzzy matching or nearest time.
@@ -13,6 +13,7 @@ from scipy.optimize import least_squares
 from scipy.stats import poisson, skellam
 from fpl_model.label_contracts import utc
 from fpl_model.models.baseline import fixture_goal_means
+from fpl_model.odds_api_markets import ALIASES as API_ALIASES, BOOKMAKER, extract_market
 
 MODEL_VERSION='component_defensive_odds_v1'
 COLUMNS=('B365H','B365D','B365A','B365>2.5','B365<2.5')
@@ -43,11 +44,11 @@ def goal_probabilities(home,away):
                 away=float(skellam.cdf(-1,home,away)),over25=1-under,under25=under)
 
 
-def fit_market(row):
+def fit_market(row, columns=COLUMNS):
     try:
-        prices={k:float(row[k]) for k in COLUMNS}
-        one,margin_one=remove_margin([prices[k] for k in COLUMNS[:3]])
-        totals,margin_totals=remove_margin([prices[k] for k in COLUMNS[3:]])
+        prices={k:float(row[k]) for k in columns}
+        one,margin_one=remove_margin([prices[k] for k in columns[:3]])
+        totals,margin_totals=remove_margin([prices[k] for k in columns[3:]])
     except (KeyError,TypeError,ValueError): raise ValueError('missing_or_invalid_bet365_market') from None
     market=dict(zip(PROB_KEYS,one+totals))
     def residual(log_rates):
@@ -60,7 +61,7 @@ def fit_market(row):
     if not fit.success or max(map(abs,errors))>MAX_FIT_ERROR or min(h,a)<=.050001 or max(h,a)>=5.99999:
         raise ValueError('poisson_fit_rejected')
     return dict(home_goals=h,away_goals=a,home_clean_sheet=math.exp(-a),away_clean_sheet=math.exp(-h),
-        prices=prices,columns=list(COLUMNS),market_probabilities=market,model_probabilities=goal_probabilities(h,a),
+        prices=prices,columns=list(columns),market_probabilities=market,model_probabilities=goal_probabilities(h,a),
         probability_errors=dict(zip(PROB_KEYS,errors)),max_probability_error=max(map(abs,errors)),
         margins={'1x2':margin_one,'over_under25':margin_totals},
         method='Independent Poisson; least squares on five normalized probabilities; log rates in [0.05,6]; max error <=0.06')
@@ -78,28 +79,32 @@ def local_kickoff(date,time):
     return a.astimezone(timezone.utc)
 
 
-def match_fixture(row,teams,fixtures):
-    if row.get('Div')!='E0': return dict(status='not_premier_league')
+def match_fixture(row,teams,fixtures,*,api=False):
+    if (row.get('sport_key')!='soccer_epl' if api else row.get('Div')!='E0'):
+        return dict(status='not_premier_league')
     ids=[]
-    for field in ('HomeTeam','AwayTeam'):
-        name=ALIASES.get(row.get(field),row.get(field))
+    aliases=API_ALIASES if api else ALIASES
+    for field in (('home_team','away_team') if api else ('HomeTeam','AwayTeam')):
+        if not isinstance(row.get(field),str):return dict(status='unknown_or_ambiguous_team')
+        name=aliases.get(row.get(field),row.get(field))
         found=[t['id'] for t in teams if t['name']==name]
         if len(found)!=1:return dict(status='unknown_or_ambiguous_team')
         ids.append(found[0])
-    try: kickoff=local_kickoff(row.get('Date',''),row.get('Time',''))
-    except (ValueError,TypeError):return dict(status='invalid_kickoff')
+    try: kickoff=utc(row.get('commence_time')) if api else local_kickoff(row.get('Date',''),row.get('Time',''))
+    except (ValueError,TypeError,AttributeError):return dict(status='invalid_kickoff')
     matches=[f for f in fixtures if (f['team_h'],f['team_a'])==tuple(ids)
              and f.get('kickoff_time') and utc(f['kickoff_time'])==kickoff]
     if len(matches)!=1:return dict(status='ambiguous_fixture' if matches else 'no_exact_official_kickoff')
-    return dict(status='matched',fixture_id=matches[0]['id'],kickoff_utc=kickoff.isoformat(),timezone_policy='Europe/London')
+    return dict(status='matched',fixture_id=matches[0]['id'],kickoff_utc=kickoff.isoformat(),timezone_policy='API aware UTC' if api else 'Europe/London')
 
 
 def build_coverage(data,rows,source,event,config,forecast_origin_at):
     origin=utc(forecast_origin_at)
     deadline=utc(next(e['deadline_time'] for e in data['events'] if e['id']==event))
-    pl=[r for r in rows if r.get('Div')=='E0']
-    matches=[dict(row_index=i,home=r.get('HomeTeam'),away=r.get('AwayTeam'),
-                  **match_fixture(r,data['teams'],data['fixtures'])) for i,r in enumerate(pl)]
+    api=source.get('source')=='the_odds_api'
+    pl=[r for r in rows if (r.get('sport_key')=='soccer_epl' if api else r.get('Div')=='E0')]
+    matches=[dict(row_index=i,home=r.get('home_team' if api else 'HomeTeam'),away=r.get('away_team' if api else 'AwayTeam'),
+                  **match_fixture(r,data['teams'],data['fixtures'],api=api)) for i,r in enumerate(pl)]
     past=[f for f in data['fixtures'] if f.get('finished') and f.get('kickoff_time') and utc(f['kickoff_time'])<origin]
     temporal_reason=None
     try:
@@ -124,17 +129,25 @@ def build_coverage(data,rows,source,event,config,forecast_origin_at):
             elif len(matching)>1:reason='duplicate_fixture_markets'
         if not reason:
             row=pl[matching[0]['row_index']]
+            entry.update(source_row=matching[0]['row_index'],kickoff_match=matching[0])
+            if api:
+                extracted=extract_market(row,source['retrieved_at'])
+                entry['market_provenance']=extracted['market_provenance']
+                reason=extracted['failure'];row=extracted['prices']
+        if not reason:
             try:
-                fit=fit_market(row)
-                entry.update(fit,status='odds',csv_row=matching[0]['row_index'],kickoff_match=matching[0])
+                fit=fit_market(row,PROB_KEYS if api else COLUMNS)
+                entry.update(fit,status='odds')
+                if not api:entry['csv_row']=matching[0]['row_index']
             except (ValueError,RuntimeError,FloatingPointError) as exc:
                 reason=str(exc) if isinstance(exc,ValueError) else 'poisson_fit_failed'
         entry['reason']=reason;result.append(entry)
     return dict(event=event,forecast_origin_at=origin.isoformat(),deadline_at=deadline.isoformat(),
-        source=source,policy='Bet365 only: '+', '.join(COLUMNS),source_published_at=None,
+        source=source,bookmaker=BOOKMAKER if api else 'bet365',
+        policy='William Hill only: complete h2h + totals exactly 2.5; no book/line substitution' if api else 'Bet365 only: '+', '.join(COLUMNS),source_published_at=None,
         total_source_rows=len(rows),premier_league_rows=len(pl),usable=sum(f['status']=='odds' for f in result),
         expected_fixtures=len(result),fixtures=result,matches=matches,
-        timezone_policy='Europe/London, empirically verified; require exact UTC FPL kickoff; reject DST ambiguity')
+        timezone_policy='Aware API commence_time to UTC; require exact FPL kickoff' if api else 'Europe/London, empirically verified; require exact UTC FPL kickoff; reject DST ambiguity')
 
 
 def eligible_overrides(coverage,event,origin,deadline,fixtures):

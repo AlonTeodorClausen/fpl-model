@@ -42,26 +42,37 @@ def load_inputs(history_snapshot,context_snapshot,forecast_origin_at):
     revisions=[dict(event=e['id'],old_deadline=old_events[e['id']]['deadline_time'],new_deadline=e['deadline_time'])
                for e in bootstrap['events'] if e['id'] in old_events and old_events[e['id']]['deadline_time']!=e['deadline_time']]
     d['input_sources']=dict(history=dict(snapshot_id=d['snapshot_id'],snapshot_path=d['snapshot_path'],
-        manifest_sha256=d['manifest_sha256'],available_at=d['as_of_at']),
-        official_context=dict(**_ref(root,manifest),files=entries),deadline_revisions=revisions,
+        manifest_sha256=d['manifest_sha256'],available_at=d['as_of_at'],
+        age_hours_at_forecast=(origin-utc(d['as_of_at'])).total_seconds()/3600),
+        official_context=dict(**_ref(root,manifest),files=entries,
+            age_hours_at_forecast={f['relative_path']:(origin-utc(f.get('available_at',f['retrieved_at']))).total_seconds()/3600 for f in entries}),deadline_revisions=revisions,
         player_metadata_note='Player histories, prices and injury/status fields are reused at their original capture time; not refreshed.')
     d.update(fixtures=fixtures,events=bootstrap['events'],teams=bootstrap['teams'],as_of_at=origin.isoformat())
     return d
 
 
-def load_odds(snapshot):
+def load_odds(snapshot,source_name='football_data_uk'):
+    if source_name not in ('football_data_uk','the_odds_api'):raise ValueError('Unknown odds source')
     root=Path(snapshot).resolve();manifest=verify_snapshot(root)
-    failures=[f for f in manifest['failures'] if f['source']=='football_data_uk']
+    failures=[f for f in manifest['failures'] if f['source']==source_name]
     bad_paths={f.get('relative_path') for f in failures}
-    entries=[f for f in manifest['files'] if f['source']=='football_data_uk' and f['outcome']=='success'
+    entries=[f for f in manifest['files'] if f['source']==source_name and f['outcome']=='success'
              and f['relative_path'] not in bad_paths]
     reference=_ref(root,manifest)
     if len(entries)!=1:
-        return [],dict(**reference,source='football_data_uk',source_published_at=None,
+        return [],dict(**reference,source=source_name,source_published_at=None,
                        failure='no_unique_valid_odds_response',failures=failures)
     entry=entries[0]
-    return read_csv((root/entry['relative_path']).read_bytes()),{**reference,**entry,
+    body=(root/entry['relative_path']).read_bytes()
+    source={**reference,**entry,
         'raw_path':entry['relative_path'],'available_at':entry.get('available_at',entry['retrieved_at']),'source_published_at':None}
+    if source_name=='the_odds_api':
+        try:
+            rows=json.loads(body)
+            if not isinstance(rows,list) or any(not isinstance(e,dict) for e in rows):raise ValueError()
+        except (ValueError,UnicodeError):return [],dict(source,failure='invalid_api_payload')
+    else:rows=read_csv(body)
+    return rows,source
 
 
 def compare_forecasts(data,coverage,config,*,draws=3000,seed=42,budget=100,kind='current_forecast_comparison'):
@@ -71,6 +82,16 @@ def compare_forecasts(data,coverage,config,*,draws=3000,seed=42,budget=100,kind=
     baseline,base_sim,_=run_prototype(data,event,config,draws=draws,seed=seed,budget=budget,evaluate_history=False)
     variant,odds_sim,_=run_prototype(data,event,config,draws=draws,seed=seed,budget=budget,
                                     defensive_odds=coverage,evaluate_history=False)
+    # Verify every actual comparison, not only the test fixtures. The model/RNG
+    # is unchanged; these checks reject any accidental expansion of the scope.
+    import numpy as np
+    if not np.array_equal(base_sim.minutes,odds_sim.minutes):raise ValueError('Odds changed simulated minutes')
+    for pid,before in base_sim.explanations.items():
+        after=odds_sim.explanations[pid]
+        if before['fixtures']!=after['fixtures']:raise ValueError('Odds changed offensive fixture assumptions')
+        for key,value in before['point_components'].items():
+            if key not in ('clean_sheets','goals_conceded') and value!=after['point_components'][key]:
+                raise ValueError('Odds changed a nondefensive point component')
     defensive_components=('clean_sheets','goals_conceded','saves','defensive_contribution','penalties_saved')
     changes=[]
     for before,after in zip(baseline['players'],variant['players']):
@@ -87,12 +108,14 @@ def compare_forecasts(data,coverage,config,*,draws=3000,seed=42,budget=100,kind=
         input_sources=data.get('input_sources'),coverage=coverage,baseline=baseline,odds_variant=variant,
         defensive_point_components=list(defensive_components),player_changes=changes,team_changes=dict(added=sorted(set(ot['squad'])-set(bt['squad'])),
             removed=sorted(set(bt['squad'])-set(ot['squad'])),baseline_starters=bt['starters'],odds_starters=ot['starters'],
+            starters_added=sorted(set(ot['starters'])-set(bt['starters'])),starters_removed=sorted(set(bt['starters'])-set(ot['starters'])),
             baseline_captain=bt['captain'],odds_captain=ot['captain']),
+        invariants=dict(minutes_identical=True,nondefensive_components_identical=True,offensive_fixture_assumptions_identical=True),
         scope='Only clean sheets and conceded-goal point deductions use odds. Minutes, attacks, saves, bonus and all other components unchanged.',
         limitations=['Forecast comparison, not evidence of which variant is better; no historical evaluation with these odds.',
             'Independent Poisson goal rates/clean sheets are model-derived; bookmaker probabilities need not be exactly Poisson-consistent.',
             'Separate defensive random stream; individual defensive deltas include Monte Carlo noise.',
-            'No publication timestamp or price age supplied by provider. available_at = retrieved_at.',
+            'Exact price publication time unknown. Provider last_update, when present, is separate from local available_at = retrieved_at.',
             'Player metadata/history is reused, with its original timestamps; missing markets explicitly use baseline.'])
 
 

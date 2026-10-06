@@ -116,7 +116,7 @@ Det opretter en ny rapport med kildefilens checksum, uændrede kørsler og `seed
 
 ### Valgfri defensiv oddsvariant
 
-`component_defensive_odds_v1` bruger kun gyldige Bet365 1X2/O-U 2,5-markeder til clean sheets og indkasserede mål. Egne mål/assists, minutter og øvrige hændelser bevares. Baseline er standard. Manglende/uklare markeder, identiteter, kickoff eller tidsprovenance giver synlig fallback.
+`component_defensive_odds_v1` bruger gyldige 1X2/O-U 2,5-markeder til clean sheets og indkasserede mål: enten Football-Data.co.uk/Bet365 eller The Odds API/William Hill, som separate kildevalg. Egne mål/assists, minutter og øvrige hændelser bevares. Baseline er standard. Manglende/uklare markeder, identiteter, kickoff eller tidsprovenance giver synlig fallback.
 
 Kør sammenligningen offline på de allerede hentede snapshots:
 
@@ -132,3 +132,23 @@ Kør sammenligningen offline på de allerede hentede snapshots:
 Udelad `--forecast-origin-at` for en ny, eksplicit registreret kørselstid; brug passende eksisterende captures. Kommandoen henter ingen data. Det konkrete nye feed indeholder 0 PL-rækker, så 0/10 GW6-kampe får odds; det opdigtede eksempel markeres særskilt og er ikke en aktuel oddsprognose. Appsektionen **Odds til clean sheets og indkasserede mål** viser de gemte sammenligninger uafhængigt af sidebarens almindelige prognosevalg. Kun egentlige captures er kilde til en rigtig prognose; syntetiske eksempler er udelukket som dokumentation for performance.
 
 [Markedspolitik, verificerede aliaser, tidszoneevidens, fit og begrænsninger](notes/defensive_odds.md).
+
+**Reel William Hill-sammenligning**, offline på API-svaret fra adgangstjekket (ingen nye kald):
+
+```bash
+.venv/bin/python scripts/compare_defensive_odds.py \
+  --history-snapshot data/raw/2026-09-24_164002695814Z_4fee7b0047014ffba28b416e9b9928ce \
+  --context-snapshot data/raw/2026-09-27_104712135033Z_f5ca590694aa4e57ae515ce1a16362fa \
+  --odds-snapshot data/raw/2026-10-01_135741394331Z_fc98daee5363459eb0d009bf198eb4be \
+  --odds-source the_odds_api --event 6 --draws 3000 --seed 42
+```
+
+Den gennemførte GW6-kørsel har **10/10 godkendte kampe efter matching, tidskontrol og fit**. Vælg `the_odds_api`-rapporten under **Odds-sammenligning** i appen. Football-Data-rapporten med 0/10 og det syntetiske eksempel forbliver særskilte valg. Rapporterne viser kilde/bookmaker, lokal tilgængelighed, provider-opdateringstider, historik-/kontekstalder og ændringer i point, trup, XI og anfører. Modelversion og standardmodel er uændrede.
+
+**Kun ved en ønsket fremtidig opdatering** (forbruger API-credits):
+
+```bash
+.venv/bin/python scripts/fetch_odds_api.py
+```
+
+Dette læser `ODDS_API_KEY` fra lokal `.env`, laver ét kald og skriver et nyt immutable snapshot samt kvotestatus til terminalen. Ingen automatiske gentagelser. Brug det udskrevne snapshot som `--odds-snapshot` i den offline sammenligning. Appstart og genkørsler henter aldrig odds. Hentekommandoen er kun mock-testet i denne integration; det gemte adgangstjek er genbrugt.

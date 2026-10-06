@@ -167,16 +167,27 @@ with st.expander('Odds til clean sheets og indkasserede mål · eksperiment',exp
     odds_paths=sorted(odds_paths,key=lambda p:read_comparison(str(p))['kind']!='current_forecast_comparison')
     if odds_paths:
         odds_path=st.selectbox('Odds-sammenligning',odds_paths,format_func=lambda p:
-            ('SYNTETISK EKSEMPEL · ' if read_comparison(str(p))['kind']!='current_forecast_comparison' else 'Faktisk dækning · ')+p.parent.name)
+            ('SYNTETISK EKSEMPEL · ' if read_comparison(str(p))['kind']!='current_forecast_comparison' else
+             'Faktisk dækning · '+read_comparison(str(p))['coverage']['source'].get('source','football_data_uk')+' · ')+p.parent.name)
         odds_report=read_comparison(str(odds_path));oc=odds_report['coverage'];osource=oc['source']
         if odds_report['kind']!='current_forecast_comparison':
             st.warning('SYNTETISK OFFLINE-EKSEMPEL — opdigtede odds på én kamp. Ikke aktuelle bookmakerpriser eller en aktuel oddsprognose.')
         else:
             st.info('Prognosesammenligning, ikke dokumentation for hvilken model der er bedst. Udfaldene kan først evalueres efter runden.')
+        source_title={'the_odds_api':'The Odds API','football_data_uk':'Football-Data.co.uk',
+                      'synthetic_offline_example':'Syntetisk demonstration'}.get(osource.get('source'),'Football-Data.co.uk')
+        st.write(f"**Datakilde: {source_title} · bookmaker: {oc.get('bookmaker','bet365')}**")
         st.write(f"**Odds-dækning: {oc['usable']}/{oc['expected_fixtures']} kampe** · GW {odds_report['event']} · "
                  f"{oc['premier_league_rows']} PL-rækker ud af {oc['total_source_rows']} kilderækker.")
         st.caption(f"Forecast: {odds_report['forecast_origin_at']} · officiel deadline: {odds_report['deadline_at']} · "
-                   f"odds hentet: {osource.get('retrieved_at','ukendt')} · publikationstid: ukendt.")
+                   f"odds hentet: {osource.get('retrieved_at','ukendt')} · available_at: {osource.get('available_at','ukendt')} · publikationstid: ukendt.")
+        inputs=odds_report.get('input_sources') or {}
+        history_age=inputs.get('history',{}).get('age_hours_at_forecast')
+        context_ages=inputs.get('official_context',{}).get('age_hours_at_forecast',{})
+        if history_age is not None:
+            st.caption(f"Alder ved forecast: spillerhistorik/metadata {history_age:.1f} timer · "
+                       f"officiel kamp-/deadlinekontekst {max(context_ages.values()):.1f} timer. "
+                       'Priser og skadesstatus kommer fortsat fra historiksnapshot og kan være forældede.')
         st.caption(f"Spillerhistorik fra snapshot {odds_report['source_history_snapshot_id']}. "
                    'Denne gemte sammenligning bruger sine egne kildereferencer og samme konfiguration/seed for begge varianter; sidebarændringer påvirker den ikke.')
         st.write('**Holdmål og clean-sheet-sandsynligheder pr. kamp**')
@@ -193,6 +204,16 @@ with st.expander('Odds til clean sheets og indkasserede mål · eksperiment',exp
                        'med ligevægtet least squares mod 1X2 og over/under 2,5; maksimalt tilladt afvigelse 0,06. '
                        'Ingen Max/Avg-blanding, asiatisk handicap eller spillerodds.')
             st.json([f for f in oc['fixtures'] if f['status']=='odds'])
+            updates=[]
+            for f in oc['fixtures']:
+                mp=f.get('market_provenance',{})
+                if mp:
+                    updates.append(dict(fixture_id=f['fixture_id'],bookmaker=mp['bookmaker'],
+                        bookmaker_last_update=mp.get('bookmaker_last_update'),
+                        **{k+'_last_update':v for k,v in mp.get('market_last_updates',{}).items()}))
+            if updates:
+                st.caption('last_update er udbyderens bookmaker-/markedsopdatering. Det er separat fra lokal hentetid og giver ikke historisk tilgængelighed.')
+                st.dataframe(pd.DataFrame(updates),hide_index=True)
             st.dataframe(pd.DataFrame(oc['matches']),hide_index=True)
             st.json(osource)
         st.write('**Ændrede spillerprognoser**')
@@ -210,6 +231,10 @@ with st.expander('Odds til clean sheets og indkasserede mål · eksperiment',exp
             team_mean=odds_report[key]['team_distribution']['mean']) for key in ('baseline','odds_variant')]),hide_index=True)
         st.write('Tilføjet:',[names[i] for i in odds_report['team_changes']['added']],
                  '· Udgået:',[names[i] for i in odds_report['team_changes']['removed']])
+        tc=odds_report['team_changes']
+        st.write('XI ind:',[names[i] for i in sorted(set(tc['odds_starters'])-set(tc['baseline_starters']))],
+                 '· XI ud:',[names[i] for i in sorted(set(tc['baseline_starters'])-set(tc['odds_starters']))])
+        st.write(f"Anfører: {names[tc['baseline_captain']]} → {names[tc['odds_captain']]}")
         for limitation in odds_report['limitations']:st.caption(limitation)
         with st.expander('Officiel kontekst og oprindelige historiktidspunkter'):
             st.json(odds_report.get('input_sources'))

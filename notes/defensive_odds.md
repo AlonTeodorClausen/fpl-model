@@ -61,3 +61,88 @@ Det separate `synthetic_offline_example_NOT_CURRENT_FORECAST` opstiller ét opdi
 **Kun som syntetisk eksempel:** Traffords xP går fra 4,111 til 3,276, defensive point fra 1,672 til 0,837; minutter og offensive bidrag er uændrede. Dette er ikke aktuelle odds eller en aktuel ændret spillerprognose. Det syntetiske holdforslag ændres også; det vises separat i appen.
 
 Rapporter gemmes eksklusivt under `artifacts/defensive_odds/` med begge modelversioner, konfiguration, seeds, raw checksums/kildestier, forecast/deadline, fit, spillerprognoser og hold. Filerne er gitignored; de er til senere udfaldsevaluering, som ikke implementeres her. Syntetiske rapporter må ikke indgå i en rigtig evaluering.
+
+## The Odds API / William Hill (1. oktober 2026)
+
+Denne kilde er nu et **separat kildevalg til samme** `component_defensive_odds_v1`.
+Football-Data.co.uk/Bet365 er fortsat tilgængelig via `--odds-source football_data_uk`
+(den eksisterende standard for sammenligningskommandoen). Den almindelige appmodel
+forbliver `component_baseline_v1`; valg af en gemt oddsrapport ændrer ikke modellen.
+
+API-politikken er fast `williamhill`: ét komplet `h2h`-marked med hjemme/uafgjort/ude
+og ét `totals`-marked med både Over og Under på **præcis 2,5**, fra samme bookmaker.
+Gyldige priser er endelige numeriske decimalodds >1. Ingen anden bookmaker, lay-pris
+eller 3,5-linje erstatter et manglende marked. Dubletter, ugyldige priser, manglende
+opdateringstidspunkter, fremtidige opdateringer, uafklaret matching og mislykket fit
+registreres som eksplicit baseline-fallback pr. kamp.
+
+API-navnealiaser: Leeds United→Leeds, Brighton and Hove Albion→Brighton,
+Manchester United→Man Utd, Tottenham Hotspur→Spurs, Nottingham Forest→Nott'm Forest,
+Manchester City→Man City, Newcastle United→Newcastle. Disse er angivet eksplicit i
+`odds_api_markets.py` og blev kontrolleret i adgangsauditten mod 20 unikke officielle
+kampe. API'ets timezone-aware `commence_time` skal matche det officielle UTC-kickoff
+præcist sammen med hjemme-/udeidentitet. CSV-kildens London-tidspolitik bruges ikke
+på API-tider.
+
+De fem priser oversættes til hjemme/uafgjort/ude/over25/under25 og sendes til den
+**eksisterende** marginfjernelse og Poisson-tilpasning uden ændrede grænser, vægte
+eller startværdier. Rapporten gemmer priser, markeder, bookmaker, API-event-ID,
+normaliserede sandsynligheder, målrater, residualer og kilde-/snapshotchecksums.
+
+`bookmaker_last_update` og `market_last_updates` beholdes separat fra lokal
+`retrieved_at`/`available_at`. Opdateringstid er ikke dokumenteret præcis prispublicering
+og giver ikke bagudrettet lokal tilgængelighed. Lokal availability skal være senest
+forecast-origin og strengt før deadline. Spillerhistorikkens/metadataenes og den
+officielle kampkonteksts alder ved forecast gemmes separat under `input_sources`.
+
+### Gennemført reel GW6-sammenligning
+
+Ingen nye netværkskald. Genbrugte API-snapshot
+`2026-10-01_135741394331Z_fc98daee5363459eb0d009bf198eb4be`, råfil
+`raw/the_odds_api/soccer_epl/odds.json`, SHA-256
+`4eb30850af3631fc22b47ee28e9bbfa91ec36014beacbfcb095276e3177d9e28`.
+Hentet 1. oktober kl. 13:57:41 UTC. De oprindelige quotaheaders fra adgangstjekket
+var 2 credits for kaldet / 498 tilbage; denne offline sammenligning bruger ingen credits.
+
+Forecast-origin `2026-10-01T14:16:17.998435+00:00`, GW6, deadline 10. oktober kl.
+10:00 UTC, 3.000 scenarier, seed 42, budget £100m, frekvens-/minutprior 1,0/1,0.
+Historik/metadata fra 24. september: 165,5 timer gammel; officiel kamp-/deadlinekontekst
+fra 27. september: 99,5 timer gammel. De genbrugte priser og skadesstatus kan være
+forældede; ingen nye historikker eller officiel kontekst er hentet i denne opgave.
+
+**10/10 anvendte kampe efter matching, tidskontrol og fit**, ingen fallback. Maksimal
+absolut sandsynlighedsresidual pr. kamp: 0,0066–0,0279 (grænse 0,06).
+Rapport: `artifacts/defensive_odds/20261001T141622183554Z_2dc7edff/comparison.json`.
+Spilletid, ikke-defensive pointkomponenter og offensive kampantagelser verificeres
+ved hver sammenligning; regressionstests kontrollerer også de ikke-defensive
+pointarrays scenarie for scenarie. Den separate defensive RNG er uændret.
+
+| Spiller | Baseline xP | William Hill xP | Forskel |
+|---|---:|---:|---:|
+| Trafford | 4,111 | 3,002 | −1,109 |
+| Muharemović | 4,113 | 3,008 | −1,106 |
+| Justin | 4,043 | 2,945 | −1,098 |
+| Bogle | 4,256 | 3,199 | −1,057 |
+| Meunier | 2,146 | 3,167 | +1,021 |
+
+Alle forskelle kommer fra clean sheets/fradrag for indkasserede mål. Trup ind:
+Raya, Calafiori, Saka, Isak; trup ud: Schade, Thomas, Haaland, Lammens.
+XI ind: Raya, Calafiori, Saka, Isak; XI ud: Schade, Davis, Haaland, Tzolakis.
+Anfører er fortsat Groß. Det er ændrede prognoser/optimeringsvalg og ikke dokumentation
+for bedre præcision. Holdfordelingerne i rapporten evaluerer hver variant i dens egen
+model; de er ikke en performance-rangering på observerede resultater.
+
+### Fremtidig eksplicit hentning
+
+`python scripts/fetch_odds_api.py` læser kun `ODDS_API_KEY` fra lokal `.env` (uden
+shell-eksekvering/interpolation), og ændrer ikke filen. Ét EPL-kald med `h2h,totals`,
+`uk`, decimal/ISO, connect/read-timeout 10/40 sekunder. Ingen automatiske retries
+eller redirects; fejl bevares i snapshotkontrakten, og CLI returnerer nonzero.
+Svarbytes skrives før validering. Hvis en fejlrespons mod forventning ekkoer nøglen,
+redigeres netop hemmeligheden ud, svaret mærkes afvist, og redigeringen registreres.
+Request-URL uden query og kun allowlistede offentlige parametre/kvoteheaders gemmes.
+Transportlogging er slået fra under requesten; ingen exceptions med nøgle-URL udskrives.
+CLI viser `last`, `used`, `remaining` fra headers; manglende headers bliver ikke nul.
+
+Kommandoen er kun testet offline med mock-svar i denne integration. Appen og
+sammenligningskommandoen kalder den aldrig automatisk. Ingen nye API-credits brugt.
