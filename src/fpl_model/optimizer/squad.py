@@ -75,11 +75,13 @@ def optimize_squad(rows, *, budget=100., locked=(), excluded=(), bench_weight=.1
     return team
 
 
-def evaluate_squad(team, rows, points, participated):
+def evaluate_squad(team, rows, points, participated, *, chip=None):
     """Autosubs on scenario participation (including supplied card-only appearances).
 
     Missing players remain formation placeholders; not all XIs can be filled.
     """
+    from fpl_model.chips import CHIPS
+    if chip not in (None,*CHIPS):raise ValueError('Ukendt chip.')
     idx={r['player_id']:i for i,r in enumerate(rows)}
     positions={r['player_id']:r['position'] for r in rows}
     xi=team['starters']; bench=team['bench']
@@ -111,4 +113,9 @@ def evaluate_squad(team, rows, points, participated):
         if selected: contribution[mask]=points[np.ix_(mask,[idx[i] for i in selected])].sum(axis=1)
     cap,vice=idx[team['captain']],idx[team['vice_captain']]
     extra=np.where(active[:,cap],points[:,cap],np.where(active[:,vice],points[:,vice],0))
-    return dict(points=total+contribution+extra,bench_points=contribution,captain_bonus=extra)
+    if chip=='bench_boost':
+        bi=[idx[i] for i in bench]
+        contribution=(points[:,bi]*active[:,bi]).sum(axis=1)
+    if chip=='triple_captain':extra=2*extra
+    return dict(points=total+contribution+extra,bench_points=contribution,captain_bonus=extra,
+                bench_contribution_kind='bench_boost' if chip=='bench_boost' else 'autosubs')

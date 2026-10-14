@@ -10,7 +10,15 @@ Fra repositoryets rod, med den eksisterende virtuelle Python-installation:
 .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
 ```
 
-Åbn http://127.0.0.1:8501. Vælg snapshot, én GW, budget, antagelser og eventuelt låste/udelukkede spillere. Tryk **Kør prognose, simulation og optimering**. Download tabeller og kørselsrapport som CSV/JSON. Budgettet er til en ny trup; salgsværdier indgår ikke.
+Åbn http://127.0.0.1:8501. **Mit hold** er hovedindgangen: indtast 15 spillere, deres faktiske salgsværdier, bank og resterende gratis transfers. Gem lokalt, vælg 1–4 GWs og tryk **Sammenlign transferforslag**. Det uændrede hold sammenlignes med transferstrategier uge for uge; alle transfers nu kan også vælges. XI, bænk og anfører/vice vælges med autosubs på planlægningsscenarier og evalueres separat. Hits er slået fra som standard. Eksempelholdet fra skærmbilledet indeholder kun verificerede spiller-ID’er; bank og salgsværdier skal udfyldes.
+
+**Import via hold-ID/link:** Skriv fx `3533723` eller det officielle link fra FPL’s pointside øverst i **Mit hold**. Tryk **Hent hold fra FPL**, kontrollér GW og spillerne, og tryk **Brug dette hold**. Importen udfylder de 15 spillere; dit gemte hold ændres først ved **Gem hold**. Bank fra den offentlige deadline vises, men skal kontrolleres. Salgsværdier, resterende gratis transfers og transfers siden deadline udfyldes manuelt; de er ikke tilgængelige i de offentlige picks. Ved samme gemte trup kan du eksplicit genbruge din lokale økonomi.
+
+Ligesom [FPL Reviews normale ID-import](https://docs.fplreview.com/the-model/planner-interface/sync_team/) er dette den seneste **offentlige deadlineopstilling**, ikke private transfers lavet bagefter. Et Free Hit-hold afvises som midlertidigt; brug manuel indtastning af den faste trup. Importen bruger kun officielle offentlige endpoints (bootstrap, entry, event picks), kræver ikke login og gemmer rå svar som lokale immutable snapshots. Ingen requests ved appstart/genkørsel, ingen automatiske retries; HTTP-fejl ændrer ikke dit gemte hold. Prognoser bruger fortsat det valgte officielle datagrundlag; ny holdimport er ikke en opdatering af alle spillerhistorikker/priser.
+
+**Holdoverblik:** Startsiden viser bank, gratis transfers og truppen på en bane efter position (ikke en anbefalet XI). Import og økonomi ligger under **Redigér hold**, og indstillinger under **Planlæg transfers**. Gemte/beregnede forslag viser ud/ind-kort og GW-faner med den faktiske anbefalede XI, prioriteret bænk, anfører, xP og minutter. Spiller-xP er før anførerfordobling; gamle rapporter beholder deres oprindelige datatidspunkt. Layoutet tilpasser sig smalle skærme.
+
+På **Analyse og eksperimenter** ligger den hidtidige enkelt-GW-prototype, spillerforklaringer, retrospektiv evaluering og gemte prior-/oddsforsøg. Den gamle optimering er fortsat til en ny trup til købspriser. Se [transferforløb og antagelser](notes/my_team_transfers.md).
 
 Kun hvis pakkerne mangler: `.venv/bin/python -m pip install -r requirements-prototype.txt`. Versionslisten er afprøvet med projektets Python 3.14.
 
@@ -36,6 +44,12 @@ Hver rå body og hvert forsøg gemmes uændret i et nyt snapshot. Context er på
 
 Genindlæs appen og vælg det nye snapshot. Den viser forsøg, gyldige svar, tomme historikker, fejl/manglende svar, brugbare rækker, eksplicitte nulminutter og karantæne samt status pr. spiller.
 
+### Opdatér data i appen
+
+Øverst på **Mit hold** henter **Hent seneste data** kun officiel bootstrap og kampplan (to HTTP-kald) og gemmer et nyt immutable snapshot. Priser, skadesstatus, nyheder og deadlines kommer fra dette snapshot; kampvis historik læses fra den seneste komplette fuldpuljeindsamling, som fandtes på det tidspunkt, og beholder sit eget snapshot-ID og hentetidspunkt. Begge tider vises særskilt. Appen henter aldrig data ved start eller almindelig genkørsel.
+
+Hvis en kamp er begyndt/afsluttet siden historikken, et resultat er revideret, eller en ny spiller mangler historik, blokeres nye transferforslag. Brug da **Hent fuld spillerhistorik** på samme side (eller CLI-kommandoen ovenfor); det tager flere minutter og gemmer også et nyt snapshot. Et delvist/fejlet svar bliver ved med at være synligt som delvis dækning, aldrig som en nulminutterskamp. Den nuværende element-summary-kilde sender hele spillerhistorikken pr. forespørgsel, så en fuld opdatering efter en spillet GW bruger stadig ét kald pr. spiller. En egentlig GW-delta-kilde kræver særskilt felt- og proveniensvalidering.
+
 ## Data og antagelser
 
 Den første fulde indsamling, 24. september 2026, hentede 667/667 spillere: 3.216 finale spiller-kampe, 1.678 eksplicitte nulminuttersrækker, ingen tomme historikker, fejl eller karantæne. Snapshot: `2026-09-24_164002695814Z_4fee7b0047014ffba28b416e9b9928ce`. De tidligere samples er bevaret. Appen viser datatidspunkt og alder. GW-valget er relativt til snapshotet; et gammelt snapshot er ikke en live-skadesopdatering. Sæsonen er foreløbig 2026/27.
@@ -54,7 +68,7 @@ Pointkomponenten følger de [officielle 2026/27-pointregler](https://www.premier
 
 Optimizeren vælger 15 spillere (2 GK/5 DEF/5 MID/3 FWD), højst tre fra samme klub, inden for budgettet, samt lovlig XI og anfører. Den kontrollerer lås/udeluk og officiel valgbarhed. Se [officielle trupregler](https://www.premierleague.com/en/news/2174419).
 
-Målet er XI-xP + anfører-xP + konfigurerbar vægt af bænk-xP (standard 0,10). Dette er en tilnærmelse i optimeringen; viceanfører og bænkrækkefølge vælges efter xP. Et tidsbegrænset solverresultat vises som ikke bevist optimalt. Det faste hold evalueres bagefter på **nye scenarier med seed + 1**, med autosubs, formationskrav, reservemålmand og viceanfører pr. scenarie. Nul point tæller ikke som DNP. Det viste bænkbidrag beregnes i scenarierne.
+I den ældre enkelt-GW-analyse er målet XI-xP + anfører-xP + konfigurerbar vægt af bænk-xP (standard 0,10). Dette er en tilnærmelse i optimeringen; viceanfører og bænkrækkefølge vælges efter xP. Et tidsbegrænset solverresultat vises som ikke bevist optimalt. Det faste hold evalueres bagefter på **nye scenarier med seed + 1**, med autosubs, formationskrav, reservemålmand og viceanfører pr. scenarie. Nul point tæller ikke som DNP. Det viste bænkbidrag beregnes i scenarierne.
 
 ## Evaluering og tid
 
@@ -76,7 +90,7 @@ Freeze/readiness bevares som separat kvalitetsspor og blokerer ikke prototypen. 
 
 Implementeret: immutable adapters/snapshots, versionerede labels, as-of/outcome-selektion, readiness/freeze samt ovenstående baseline, simulation, optimizer, CLI, Streamlit og mini-evaluering. Modelkode ligger i `src/fpl_model/`, adskilt fra UI.
 
-De ældre `models/minutes.py`, `attack.py`, `defcon.py` og `team_goals.py` er stadig scaffold; prototypens komponentlogik ligger i `models/baseline.py` og `simulation.py`. Der er ingen trænet ML-model. Transfers, chips, fler-GW-planlægning, Core/odds/Elo i prognoser og dokumenteret kalibrering er senere arbejde.
+De ældre `models/minutes.py`, `attack.py`, `defcon.py` og `team_goals.py` er stadig scaffold; prototypens komponentlogik ligger i `models/baseline.py` og `simulation.py`. Der er ingen trænet ML-model. Transfers nu med fastholdt trup over 1–4 GWs og valgfri defensiv oddsvariant er implementeret. Uge-for-uge-transfersekvenser og autosub-aware opstillinger for fundne kandidattrupper er implementeret. Chips, Core/Elo i prognoser og dokumenteret kalibrering er senere arbejde.
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -152,3 +166,42 @@ Den gennemførte GW6-kørsel har **10/10 godkendte kampe efter matching, tidskon
 ```
 
 Dette læser `ODDS_API_KEY` fra lokal `.env`, laver ét kald og skriver et nyt immutable snapshot samt kvotestatus til terminalen. Ingen automatiske gentagelser. Brug det udskrevne snapshot som `--odds-snapshot` i den offline sammenligning. Appstart og genkørsler henter aldrig odds. Hentekommandoen er kun mock-testet i denne integration; det gemte adgangstjek er genbrugt.
+
+Uge-for-uge-transferstrategier, FPL-nyheder og eksplicitte skadesscenarier: se [notes/transfer_sequences.md](notes/transfer_sequences.md). Ingen automatisk nyhedsindsamling eller chips.
+
+### Odds til angreb og forsvar
+
+I **Mit hold → Planlæg transfers → Prognosemodel** kan du vælge **Odds til angreb og forsvar · William Hill**. Den gamle defensive variant ændrer fortsat kun clean sheets/indkasserede mål. Den nye `component_attacking_odds_v1` fordeler også holdets odds-målbudget efter udglattet spiller-xG/xA og forventede minutter, uden ekstra egen-holdstyrkemultiplikator. Baseline er stadig standard. Se [metode, fallback og begrænsninger](notes/attacking_odds.md). Gemte trevejssammenligninger ligger under **Analyse og eksperimenter → Oddsmodeller**; kør den eksisterende sammenlignings-CLI med `--odds-scope attack_and_defence`. Ingen implicit datahentning.
+
+Opt-in **Eksperiment · rolle, returminutter og fælles mål** tilføjer nyere rollehistorik, separate returbegrænsninger og fælles scorer/assist-mål. Baseline er fortsat standard; den første rolle-evaluering forværrer regelmæssige spilleres minutfejl. Gemte før-deadline-scenarier kan efterkontrolleres mod endelige officielle labels fra appen eller CLI. Se [metode, begrænsninger og kommandoer](notes/model_evolution.md).
+
+**Efter runden:** Under **Analyse og eksperimenter → Efter runden** kan både tidligere reelle GW6-oddsrapporter og nyere gemte simulationer efterkontrolleres på samme endelige spillerudfald. Rundestatus, afventende labels og fejl for regelmæssige spillere vises eksplicit. Ældre rapporter uden scenarier får ingen CRPS. [Arbejdsgang og konkret GW6-kommando](notes/model_evolution.md#praktisk-efterkontrol-af-gw6-og-senere-runder). Ingen automatisk datahentning, genberegning eller ændring af standardmodellen.
+
+### Rollespecifik spilletid (valgfrit eksperiment)
+
+Vælg **Mit hold → Prognosemodel → Eksperiment · rollespecifik spilletid**. Baseline er fortsat standard. Gemte sammenligninger findes under **Analyse og eksperimenter → Rollespecifik spilletid · udviklingssammenligning**. Se [kontrakt, offline-kommando og resultater](notes/role_minutes.md). Ingen nye downloads kræves.
+
+### Dødboldsroller (valgfrit følsomhedsscenarie)
+
+**Mit hold → Prognosemodel → Eksperiment · dødboldsroller og odds** bruger gemte officielle rolleordener til at omfordele en antaget del af eksisterende mål-/assistbudgetter. Baseline er uændret; dette er ikke en kalibreret non-penalty xG-model. Konfiguration og kildetidspunkter er synlige. Gemte sammenligninger findes under **Analyse og eksperimenter → Dødboldsroller**. Se [metode, begrænsninger og offline-kommando](notes/set_piece_roles.md).
+
+### Præstationsafhængig bonus (valgfrit eksperiment)
+
+Under **Mit hold → Prognosemodel** kan baseline eller angrebsodds få tilvalget **Eksperiment: præstationsafhængig bonus**. Kun bonus ændres; modellen trænes på tidligere endelige kampe og anvendes på simulerede præstationer. Standardmodellen er uændret. **Analyse og eksperimenter → Bonus** viser gemt evaluering og GW7-prognose. Resultaterne er blandede og begrunder ikke et standardskifte. Se [metode, begrænsninger og reproducerbar kommando](notes/conditional_bonus.md).
+
+### Spillerprior fra sidste sæson (eksperiment)
+
+Under **Mit hold → Prognosemodel** kan Baseline eller angrebsoddsmodellen bruge seneste afsluttede sæsons officielle xG/xA som svagt spillerprior. Tilvalget er fravalgt som standard og bevarer spilletid, bonus og forsvar. Eksisterende `history_past` genbruges uden downloads; manglende/ugyldig historik giver markeret positions-fallback. Gemte sammenligninger vises under **Analyse og eksperimenter → Spillerprior fra sidste sæson · xG/xA**. Se [metode, begrænsninger og kørekommando](notes/previous_season_priors.md).
+
+### FPL-assistkorrektion (eksperiment)
+
+Under **Mit hold → Prognosemodel** findes det fravalgte tilvalg **Eksperiment: FPL-assistkorrektion**. En fælles faktor fra tidligere færdige FPL-assists/xA ændrer kun assistdelen. Den kombineres ikke med de andre eksperimenter. Gemte resultater findes under **Analyse og eksperimenter → FPL-assists · xA-korrektion**. Den første udviklingsevaluering forbedrer ikke baseline; behold standardmodellen. Se [metode, resultater og kørekommando](notes/fpl_assist_correction.md).
+
+### Standardprognose og manuelle chips
+
+**Mit hold** bruger nu én standardprognose. Bekræft dine chips under **Redigér hold →
+Mine chips**, vælg derefter chipuge under **Planlæg transfers → Chips i denne plan**.
+Wildcard, Free Hit, Triple Captain og Bench Boost understøttes med manuelt valgte uger
+inden for 1–4 GWs. Automatisk chipstrategi frem til GW19 kommer senere.
+Modelvalg og forsøg ligger under **Analyse og eksperimenter → Transferlaboratorium**.
+Se [regler, brug og begrænsninger](notes/chips.md).

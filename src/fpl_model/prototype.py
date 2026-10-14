@@ -15,22 +15,23 @@ from fpl_model.models.baseline import model_version
 
 
 def run_prototype(data, event, config, *, draws=3000, seed=None, budget=100,
-                  locked=(), excluded=(), bench_weight=.1, defensive_odds=None, evaluate_history=True):
+                  locked=(), excluded=(), bench_weight=.1, defensive_odds=None, evaluate_history=True, odds_scope='defence'):
+    from fpl_model.attacking_odds import variant_version
     if defensive_odds is not None and evaluate_history:
         raise ValueError('No historical evaluation for the defensive odds variant')
     seed = int(np.random.SeedSequence().generate_state(1)[0]) if seed is None else int(seed)
-    forecasts = simulate(data,event,config,draws=draws,seed=seed,defensive_odds=defensive_odds)
+    forecasts = simulate(data,event,config,draws=draws,seed=seed,defensive_odds=defensive_odds,odds_scope=odds_scope)
     table = forecasts.summary()
     team = optimize_squad(table,budget=budget,locked=locked,excluded=excluded,bench_weight=bench_weight)
     # Independent scenarios evaluate the fixed selected team, reducing MC selection optimism.
-    independent = simulate(data,event,config,draws=draws,seed=seed+1,defensive_odds=defensive_odds)
+    independent = simulate(data,event,config,draws=draws,seed=seed+1,defensive_odds=defensive_odds,odds_scope=odds_scope)
     totals = evaluate_squad(team,table,independent.points,independent.minutes>0)
     values = totals['points']
     report = dict(snapshot_id=data['snapshot_id'],as_of_at=data['as_of_at'],
         manifest_sha256=data.get('manifest_sha256'),coverage=data.get('coverage'),
-        model_version=model_version(config) if defensive_odds is None else 'component_defensive_odds_v1',created_at=datetime.now(timezone.utc).isoformat(),
+        model_version=model_version(config) if defensive_odds is None else variant_version(odds_scope),odds_scope=odds_scope,created_at=datetime.now(timezone.utc).isoformat(),
         code_sha256={name:hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
-            for name in ('defensive_odds.py','odds_api_markets.py','odds_comparison.py','diagnostics.py','models/baseline.py','simulation.py','scoring.py','history_coverage.py','backtest/walk_forward.py','optimizer/squad.py')},
+            for name in ('attacking_odds.py','defensive_odds.py','odds_api_markets.py','odds_comparison.py','diagnostics.py','models/baseline.py','simulation.py','scoring.py','history_coverage.py','backtest/walk_forward.py','optimizer/squad.py')},
         runtime_versions={'python':platform.python_version(),**{p:version(p) for p in ('numpy','scipy','pandas')}},
         snapshot_path=data.get('snapshot_path'),event=event,config=asdict(config),draws=draws,
         seed=seed,team_evaluation_seed=seed+1,budget=budget,locked=sorted(locked),excluded=sorted(excluded),

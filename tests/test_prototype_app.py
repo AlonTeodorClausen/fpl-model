@@ -4,6 +4,12 @@ from streamlit.testing.v1 import AppTest
 from test_prototype import data
 
 
+def open_analysis():
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
+    return app
+
+
 def test_app_runs_forecasts_optimization_and_evaluation(monkeypatch,tmp_path):
     import fpl_model.prototype_data as source
     import fpl_model.prototype as service
@@ -12,12 +18,12 @@ def test_app_runs_forecasts_optimization_and_evaluation(monkeypatch,tmp_path):
     monkeypatch.setattr(source,'snapshot_paths',lambda root:[tmp_path])
     monkeypatch.setattr(source,'load_data',lambda path:d)
     monkeypatch.setattr(service,'save_run',lambda report,output=None:tmp_path/'saved')
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    app=open_analysis()
     assert not app.exception
     app.button[0].click().run(timeout=60)
     assert not app.exception
     assert len(app.metric)==4 and len(app.dataframe)>=2
-    next(w for w in app.number_input if w.label=='Budget (£m, ny trup)').set_value(90.).run()
+    next(w for w in app.number_input if w.label=='Budget (£m, ny trup)').set_value(90.).run(timeout=30)
     assert any('Indstillingerne er ændret' in w.value for w in app.warning)
 
 
@@ -34,7 +40,7 @@ def test_app_shows_coverage_and_grouped_evaluation_without_fetching(monkeypatch,
     # Artifact writing is separately integration-tested; no writes into user data.
     assert hasattr(service,'save_run')
     monkeypatch.setattr(service,'save_run',lambda report,output=None:tmp_path/'saved')
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    app=open_analysis()
     assert not app.exception
     assert any('Dækning' in e.value for e in app.markdown)
     app.button[0].click().run(timeout=60)
@@ -64,7 +70,7 @@ def test_app_can_show_saved_experiment_without_running_forecast(monkeypatch,tmp_
     monkeypatch.setattr(source,'load_data',lambda path:d)
     assert hasattr(experiments,'comparison_paths')
     monkeypatch.setattr(experiments,'comparison_paths',lambda root:[path])
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    app=open_analysis()
     assert not app.exception
     assert any('udviklingsdata' in w.value.lower() for w in app.warning)
     assert any('component_frequency_010_v1' in f.value.to_string() for f in app.dataframe)
@@ -86,7 +92,7 @@ def test_app_shows_odds_fallback_and_clearly_labels_synthetic_example(monkeypatc
     monkeypatch.setattr(source,'snapshot_paths',lambda root:[tmp_path])
     monkeypatch.setattr(source,'load_data',lambda p:d)
     monkeypatch.setattr(odds,'comparison_paths',lambda root:[a,b])
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    app=open_analysis()
     assert not app.exception
     assert any('0/1' in e.value for e in app.markdown)
     select=next(w for w in app.selectbox if w.label=='Odds-sammenligning')
@@ -111,7 +117,7 @@ def test_app_shows_real_api_source_updates_and_xi_changes_without_network(monkey
     monkeypatch.setattr(odds,'comparison_paths',lambda root:[path])
     def forbidden(*a,**k):raise AssertionError('No app network')
     monkeypatch.setattr(requests.sessions.Session,'request',forbidden)
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    app=open_analysis()
     assert not app.exception
     assert any('The Odds API' in x.value and 'williamhill' in x.value for x in app.markdown)
     assert any('1/1' in x.value for x in app.markdown)

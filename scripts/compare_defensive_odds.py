@@ -1,4 +1,4 @@
-"""Compare defensive-only odds against v1 using existing immutable captures. Offline."""
+"""Compare defensive or attacking+defensive odds against v1 using existing immutable captures. Offline."""
 import argparse
 from datetime import datetime,timezone
 import json
@@ -19,6 +19,7 @@ def main(argv=None):
     p.add_argument('--odds-source',choices=('football_data_uk','the_odds_api'),default='football_data_uk')
     p.add_argument('--forecast-origin-at',default=None)
     p.add_argument('--event',type=int)
+    p.add_argument('--odds-scope',choices=('defence','attack_and_defence'),default='defence')
     p.add_argument('--draws',type=int,default=3000)
     p.add_argument('--seed',type=int,default=42)
     p.add_argument('--budget',type=float,default=100)
@@ -31,7 +32,7 @@ def main(argv=None):
     if event not in upcoming:p.error('Select a GW whose verified official deadline is still in the future')
     rows,source=load_odds(args.odds_snapshot,source_name=args.odds_source);config=BaselineConfig()
     coverage=build_coverage(data,rows,source,event,config,origin.isoformat())
-    result=compare_forecasts(data,coverage,config,draws=args.draws,seed=args.seed,budget=args.budget)
+    result=compare_forecasts(data,coverage,config,draws=args.draws,seed=args.seed,budget=args.budget,odds_scope=args.odds_scope)
     out=save_comparison(result)
     print(json.dumps(dict(output=str(out),event=event,usable=coverage['usable'],expected=coverage['expected_fixtures'],
         source_rows=coverage['total_source_rows'],pl_rows=coverage['premier_league_rows'],reasons=sorted({f['reason'] for f in coverage['fixtures'] if f['reason']}))))

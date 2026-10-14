@@ -66,7 +66,7 @@ def minute_diagnostics(evaluation_rows, data, config):
             forecast_origin_at=r['forecast_origin_at'],prior=h,start_group=start_group,minute_group=minute_group,
             regular=regular,actual_minutes=r['actual_minutes'],predicted_minutes=r['predicted_minutes'],
             reference_minutes=r['reference_minutes'],observed_start=start,observed_sub=h['sub_frequency'],
-            model_start=par['p_start'],model_sub=par['p_sub'],prior_mean_minutes=mean))
+            model_start=r.get('model_start',par['p_start']),model_sub=r.get('model_sub',par['p_sub']),prior_mean_minutes=mean))
     def grouped(key,rows):
         return [dict(group=g,**_group_metrics([r for r in rows if r[key]==g])) for g in sorted({r[key] for r in rows})]
     regular=[r for r in records if r['regular']]

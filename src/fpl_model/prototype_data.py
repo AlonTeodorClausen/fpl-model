@@ -18,7 +18,20 @@ def snapshot_paths(raw_root):
     return sorted(found,reverse=True)
 
 
-def load_data(path, *, season='2026-2027'):
+def preferred_snapshot_index(paths):
+    """Context-only captures remain selectable, but cannot displace history by default."""
+    for i,path in enumerate(paths):
+        try:
+            manifest=json.loads((Path(path)/'manifest.json').read_text())
+        except (OSError,ValueError):
+            continue
+        if any(f.get('source')=='fpl_api' and f.get('outcome')=='success'
+               and '/element_summary/' in f.get('relative_path','') for f in manifest.get('files',[])):
+            return i
+    return 0
+
+
+def load_data(path, *, season='2026-2027', include_season_history=False):
     root=Path(path).resolve();manifest=verify_snapshot(root)
     entries=[e for e in manifest['files'] if e['source']=='fpl_api' and e['outcome']=='success']
     def read(name):
@@ -36,7 +49,11 @@ def load_data(path, *, season='2026-2027'):
         raise ValueError('Unsupported squad rules in snapshot')
     if {p['id']:p['squad_select'] for p in bootstrap['element_types']}!={1:2,2:5,3:5,4:3}:
         raise ValueError('Unsupported position rules')
-    return dict(players=bootstrap['elements'],teams=bootstrap['teams'],events=bootstrap['events'],fixtures=fixtures,
+    extra={}
+    if include_season_history:
+        from fpl_model.season_priors import read_season_histories
+        extra['season_histories']=read_season_histories(root,manifest,bootstrap['elements'])
+    return dict(**extra,players=bootstrap['elements'],teams=bootstrap['teams'],events=bootstrap['events'],fixtures=fixtures,
                 histories=normalized['labels'] if normalized else [],quarantine=normalized['quarantine'] if normalized else [],
                 as_of_at=max(utc(e.get('available_at',e['retrieved_at'])) for e in entries).isoformat(),
                 snapshot_id=manifest['run_id'],snapshot_path=str(root),season=season,rules=rules,

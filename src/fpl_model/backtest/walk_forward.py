@@ -32,14 +32,16 @@ def _metrics(rows):
                 reference=_errors(actual,[r['reference'] for r in rows]),minutes=minutes,dnp=dnp)
 
 
-def evaluate_sample(data, config, *, draws=1000, seed=42):
+def evaluate_sample(data, config, *, draws=1000, seed=42, evolution=None, bonus_config=None, bonus_diagnostics=False, season_prior_config=None, assist_config=None, assist_diagnostics=False):
     """Keep baseline v1; compare identical, explicitly observed final player-GWs.
 
     Rows with unsafe prior denominators are excluded, not imputed or scored as
     DNP. This selection intentionally excludes many transfers/new registrations.
     """
+    if evolution and evolution.shared_goals:
+        raise ValueError('Shared goals require the full historical team pool; use role-only retrospective evaluation')
     final=[r for r in data['histories'] if r['label_state']=='final']
-    records=[];excluded=[]
+    records=[];excluded=[];bonus_fits={};assist_fits={}
     by_id={p['id']:p for p in data['players']}
     for event in sorted({r['event'] for r in final}):
         deadline=utc(next(e['deadline_time'] for e in data['events'] if e['id']==event))
@@ -63,14 +65,25 @@ def evaluate_sample(data, config, *, draws=1000, seed=42):
                     or len(observed)!=len(scheduled) or {r['fixture_id'] for r in observed}!={f['id'] for f in scheduled}):
                     reason='missing_provisional_or_moved_target'
                 if reason is None:
-                    selected.append(dict(id=pid,element_type=by_id[pid]['element_type'],team=team))
+                    selected.append(dict(id=pid,element_type=by_id[pid]['element_type'],team=team,**({'code':by_id[pid].get('code')} if season_prior_config else {})))
                     targets[pid]=observed;priors[pid]=own
             if reason: excluded.append(dict(player_id=pid,event=event,reason=reason))
         if not selected: continue
         # Shallow context copy: model is read-only; avoid copying every raw history
         # and its provenance for every fold of the complete player pool.
-        run={**data,'players':selected,'histories':past}
-        scenario=simulate(run,event,config,draws=draws,seed=seed+event,retrospective=True)
+        role_pool=[]
+        if evolution:
+            for pid,p in sorted(by_id.items()):
+                earlier=[r for r in past if r['player_id']==pid]
+                if earlier:
+                    team=max(earlier,key=lambda r:utc(r['kickoff_time']))['team_id']
+                    role_pool.append(dict(id=pid,element_type=p['element_type'],team=team))
+        run={**data,'players':selected,'histories':past,'role_prior_players':role_pool}
+        if bonus_config is not None:run['bonus_training_players']=data['players']
+        if assist_config is not None:run['assist_training_players']=data['players']
+        scenario=simulate(run,event,config,draws=draws,seed=seed+event,retrospective=True,evolution=evolution,bonus_config=bonus_config,season_prior_config=season_prior_config,assist_config=assist_config)
+        if bonus_config is not None:bonus_fits[event]=scenario.bonus_model
+        if assist_config is not None:assist_fits[event]=scenario.assist_model
         for i,p in enumerate(selected):
             pid=p['id'];own=priors[pid];target=targets[pid];count=len(target)
             actual=sum(r['total_points'] for r in target);minutes=sum(r['minutes'] for r in target)
@@ -83,7 +96,21 @@ def evaluate_sample(data, config, *, draws=1000, seed=42):
                 reference_minutes=float(np.mean([r['minutes'] for r in own])*count),
                 actual_dnp=int(minutes==0),p_no_play=float((scenario.minutes[:,i]==0).mean()),
                 reference_dnp=float(np.mean([r['minutes']==0 for r in own])**count),
-                crps=float(crps),prior_rows=len(own)))
+                crps=float(crps),prior_rows=len(own),**({'model_start':scenario.parameters[pid]['p_start'],'model_sub':scenario.parameters[pid]['p_sub']} if evolution else {})))
+            if season_prior_config is not None:
+                records[-1]['season_prior']=scenario.explanations[pid]['season_prior']
+            if assist_diagnostics:
+                known=all(r.get('assists') is not None for r in target)
+                prior_known=all(r.get('assists') is not None for r in own)
+                records[-1].update(actual_assists=sum(r['assists'] for r in target) if known else None,
+                    predicted_assists=scenario.explanations[pid]['point_components']['assists']/3,
+                    reference_assists=float(np.mean([r['assists'] for r in own])*count) if prior_known else None)
+            if bonus_diagnostics:
+                known=all(r.get('bonus') is not None for r in target)
+                prior_known=all(r.get('bonus') is not None for r in own)
+                records[-1].update(actual_bonus=sum(r['bonus'] for r in target) if known else None,
+                    predicted_bonus=scenario.explanations[pid]['point_components']['bonus'],
+                    reference_bonus=float(np.mean([r['bonus'] for r in own])*count) if prior_known else None)
     summary=_metrics(records)
     if records:
         bins=[]
@@ -94,8 +121,11 @@ def evaluate_sample(data, config, *, draws=1000, seed=42):
                 observed_rate=float(np.mean([r['actual_dnp'] for r in subset])) if subset else None))
         summary['dnp']['bins']=bins
     return dict(**summary,status='retrospective_limited' if records else 'insufficient_data',
-        evaluation_version=EVALUATION_VERSION,model_version=model_version(config),
-        config=asdict(config),draws=draws,seed=seed,snapshot_id=data['snapshot_id'],
+        evaluation_version=EVALUATION_VERSION,model_version=(evolution.version if evolution else model_version(config))+('__conditional_bonus_v1' if bonus_config else '')+('__previous_season_attack_prior_v1' if season_prior_config else '')+('__fpl_assist_correction_v1' if assist_config else ''),
+        **({'assist_config':asdict(assist_config),'assist_fits':assist_fits} if assist_config else {}),
+        **({'season_prior_config':asdict(season_prior_config)} if season_prior_config else {}),
+        **({'bonus_config':asdict(bonus_config),'bonus_fits':bonus_fits} if bonus_config else {}),
+        config=asdict(config),**({'evolution':asdict(evolution)} if evolution else {}),draws=draws,seed=seed,snapshot_id=data['snapshot_id'],
         manifest_sha256=data.get('manifest_sha256'),player_count=len({r['player_id'] for r in records}),
         gameweeks=sorted({r['event'] for r in records}),rows=records,
         minute_diagnostics=minute_diagnostics(records,data,config),
