@@ -1,7 +1,7 @@
-"""Explicit two-request official context refresh and audited history reuse.
+"""Explicit official context refresh with audited player-history reuse.
 
-This refresh updates prices/status/fixtures/deadlines, not player-match history.
-The latter keeps its original snapshot, timestamps and raw-file provenance.
+The smart workflow captures context first, then updates player histories only
+when coverage changed. Reused histories retain their original provenance.
 """
 from contextlib import nullcontext
 from pathlib import Path
@@ -25,6 +25,54 @@ def capture_official_context(raw_root, *, season, session=None, clock=_utc_now):
     except BaseException:
         writer.mark_failed()
         raise
+
+
+def refresh_official_data(raw_root, *, season, known_paths, progress=None,
+                          session=None, clock=_utc_now, request_interval=.5):
+    """One explicit refresh: context first, then histories only if coverage changed.
+
+    Element-summary returns a whole player history, so a required full-pool
+    refresh still makes one request per current player. Never relabel a partial
+    capture as complete or replace an old raw file with new bytes.
+    """
+    from fpl_model.full_player_capture import capture_all_players
+
+    def announce(stage, **fields):
+        if progress is not None:
+            progress(dict(stage=stage, **fields))
+
+    context = capture_official_context(raw_root, season=season, session=session, clock=clock)
+    announce('context', context_snapshot=context)
+    history = latest_history_snapshot([*known_paths, context], context, season=season)
+    coverage = (load_current_inputs(context, history, season=season)['coverage']
+                if history is not None else {})
+    changed = sorted(set(coverage.get('newly_started_fixture_ids', []))
+                     | set(coverage.get('newly_finished_fixture_ids', []))
+                     | set(coverage.get('revised_result_fixture_ids', [])))
+    required = history is None or coverage['history_refresh_required']
+    base = dict(context_snapshot=context, history_snapshot=history,
+                history_required=required, changed_fixture_ids=changed,
+                new_player_ids=coverage.get('new_player_ids_without_history', []))
+    if not required:
+        announce('complete', status='context_only')
+        return dict(**base, status='context_only', selected_snapshot=context,
+                    attempted_history_snapshot=None)
+
+    announce('history', changed_fixture_ids=changed, new_player_ids=base['new_player_ids'])
+    def player_progress(row):
+        announce('player', **row)
+    capture = capture_all_players(raw_root, season=season, session=session,
+                                  clock=clock, request_interval=request_interval,
+                                  progress=player_progress)
+    metadata = verify_snapshot(capture).get('run_metadata', {})
+    complete = (metadata.get('purpose') == 'official_full_player_history'
+                and metadata.get('season') == season
+                and metadata.get('overall') == 'complete'
+                and metadata.get('successful_players') == metadata.get('player_count'))
+    status = 'history_complete' if complete else 'history_partial'
+    announce('complete', status=status, attempted_history_snapshot=capture)
+    return dict(**base, status=status, selected_snapshot=capture if complete else context,
+                attempted_history_snapshot=capture)
 
 
 def _reference(data):

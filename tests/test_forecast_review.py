@@ -76,6 +76,31 @@ def test_readiness_uses_flags_not_elapsed_kickoff():
     assert m.event_readiness(c,6)['status']=='context_final_labels_still_required'
 
 
+def test_review_prefers_latest_completed_gw_over_newer_unfinished_deadline():
+    from datetime import datetime,timezone
+    from fpl_model.ui.forecast_review import preferred_review_index
+    choices=[dict(event=6,origin='2026-10-06T10:00:00Z',deadline_at='2026-10-10T10:00:00Z'),
+             dict(event=7,origin='2026-10-16T10:00:00Z',deadline_at='2026-10-17T10:00:00Z')]
+    context=dict(events=[dict(id=6,finished=True,data_checked=True),
+                         dict(id=7,finished=False,data_checked=False)],
+                 fixtures=[dict(id=51,event=6,finished=True),dict(id=61,event=7,finished=False)])
+    now=datetime(2026,10,18,tzinfo=timezone.utc)
+    assert preferred_review_index(choices,context,now)==0
+    context['events'][1].update(finished=True,data_checked=True)
+    context['fixtures'][1]['finished']=True
+    assert preferred_review_index(choices,context,now)==1
+
+
+def test_review_attributes_labels_to_history_snapshot_not_fresh_context():
+    from fpl_model.ui.forecast_review import outcome_source_reference
+    data=dict(snapshot_id='new-context',snapshot_path='/raw/new',manifest_sha256='new-hash',
+              as_of_at='2026-10-15T10:00:00Z',input_sources=dict(history=dict(
+                  snapshot_id='old-history',snapshot_path='/raw/old',manifest_sha256='old-hash',
+                  available_at='2026-10-14T20:00:00Z')))
+    assert outcome_source_reference(data)==dict(snapshot_id='old-history',snapshot_path='/raw/old',
+        manifest_sha256='old-hash',as_of_at='2026-10-14T20:00:00Z')
+
+
 def test_new_context_snapshot_does_not_displace_full_history_default(tmp_path):
     from fpl_model import prototype_data
     assert hasattr(prototype_data,'preferred_snapshot_index')

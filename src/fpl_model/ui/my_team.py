@@ -1,5 +1,6 @@
 """Personal-team editor and transfer comparisons. Team import is an explicit action."""
 from datetime import datetime, timezone
+from collections import Counter
 import json
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from fpl_model.models.baseline import BaselineConfig
 from fpl_model.my_team import money, validate_profile, save_profile, load_profile
 from fpl_model import prototype_data
 from fpl_model import quick_refresh
+from fpl_model.readiness import assess_deadline_readiness
 from fpl_model.data_sources.fpl_api import FPLSourceError
 from fpl_model.io import SnapshotError
 from fpl_model.odds_comparison import load_odds
@@ -195,14 +197,40 @@ def render(*, experimental_mode=False):
     history_gap=data.get('coverage',{}).get('history_refresh_required',False)
     st.caption(f"Priser, status, kampe og deadlines: {utc(data['as_of_at']).strftime('%d/%m kl. %H:%M UTC')} · {age:.1f} timer gamle")
     st.caption(f"Kampvis historik: {utc(history_at).strftime('%d/%m kl. %H:%M UTC')} · snapshot {history.name}")
-    st.caption('Hurtig opdatering henter priser, status og kampplan; kampvis historik beholder sit oprindelige hentetidspunkt.')
+    st.caption('Opdatering henter først priser, status og kampplan. Spillerhistorikker hentes kun igen, hvis nye eller ændrede kampe/spillere kræver det.')
+    last_refresh=st.session_state.pop('last_official_refresh',None)
+    if last_refresh:
+        if last_refresh['status']=='context_only':
+            st.success('Kontekst opdateret. Kampvis historik kunne genbruges uden nye spillerforespørgsler.')
+        elif last_refresh['status']=='history_complete':
+            st.success('Kontekst og hele spillerhistorikken er opdateret i nye snapshots.')
+        else:
+            st.error('Spillerhistorikken blev kun delvist hentet. Det nye kontekstsnapshot er bevaret, men nye forslag er blokeret.')
+    last_error=st.session_state.pop('last_official_refresh_error',None)
+    if last_error:st.error(f'Historikopdatering mislykkedes ({last_error}). Den nye kontekst er bevaret; gamle historikker bruges ikke som nye labels.')
     if st.button('Hent seneste data'):
+        bar=st.progress(0.0)
+        status=st.empty()
+        def progress(row):
+            stage=row['stage']
+            if stage=='context':
+                st.session_state['pending_official_snapshot_choice']=row['context_snapshot']
+                status.info('Ny officiel kontekst gemt. Kontrollerer, om kampvis historik skal opdateres …')
+            elif stage=='history':
+                status.info('Nye/ændrede kampe kræver spillerhistorik. Henter hele den aktuelle spillerpulje skånsomt …')
+            elif stage=='player':
+                bar.progress(row['completed']/row['total'])
+                status.caption(f"Spillere: {row['completed']}/{row['total']} · seneste svar: {row['status']}")
         try:
-            with st.spinner('Henter officiel kontekst og gemmer nyt snapshot…'):
-                fresh=quick_refresh.capture_official_context(LOCAL_ROOT/'data/raw',season=season)
-            st.session_state['pending_official_snapshot_choice']=fresh
+            result=quick_refresh.refresh_official_data(LOCAL_ROOT/'data/raw',season=season,
+                known_paths=paths,progress=progress)
+            st.session_state['pending_official_snapshot_choice']=result['selected_snapshot']
+            st.session_state['last_official_refresh']=result
             st.rerun()
         except (FPLSourceError,SnapshotError,OSError,ValueError) as exc:
+            if st.session_state.get('pending_official_snapshot_choice'):
+                st.session_state['last_official_refresh_error']=type(exc).__name__
+                st.rerun()
             st.error(f'Opdatering mislykkedes ({type(exc).__name__}); det valgte datagrundlag er uændret.')
     if history_gap:
         st.caption('Efter en spillet kamp kræves fuld kampvis historik. Det kan tage flere minutter.')
@@ -220,13 +248,24 @@ def render(*, experimental_mode=False):
                 st.rerun()
             except (FPLSourceError,SnapshotError,OSError,ValueError) as exc:
                 st.error(f'Fuld opdatering mislykkedes ({type(exc).__name__}); rådata fra forsøget bevares lokalt.')
-    if age>24:
-        st.warning('Datagrundlaget er over et døgn gammelt. Kontrollér især priser, skader og kampplan før en transfer.')
+    readiness=assess_deadline_readiness(data,now)
+    if readiness['status']=='ready':
+        st.success(f"Klar til GW{readiness['event']} · officiel deadline {readiness['deadline_at']} · officielle inputs dækket.")
+    elif readiness['status']=='attention':
+        st.warning(f"Kontrollér data før GW{readiness['event']} · årsager: {', '.join(readiness['reasons'])}.")
+    else:
+        st.error(f"Ikke klar til nye forslag · årsager: {', '.join(readiness['reasons'])}.")
+    st.caption(f"Kontekst {readiness['context_age_hours']:.1f} timer · historik {readiness['history_age_hours']:.1f} timer · "
+               f"operationel kontekstgrænse {readiness['max_context_age_hours']:.0f} timer. "
+               'Odds er valgfrie for standardmodellen og kontrolleres særskilt, når oddsmodellen vælges.')
+    from fpl_model.ui.forecast_review import show_forecast_review
+    show_forecast_review(LOCAL_ROOT,data)
     if history_gap:
         coverage=data['coverage']
         st.warning('Kampvis historik mangler nyligt afsluttede kampe, begyndte kampe eller nye spillere i dette kontekstsnapshot. '
                    f"Begyndte kamp-ID’er: {coverage.get('newly_started_fixture_ids',[])} · "
                    f"afsluttede kamp-ID’er: {coverage.get('newly_finished_fixture_ids',[])} · "
+                   f"reviderede resultater: {coverage.get('revised_result_fixture_ids',[])} · "
                    f"nye spiller-ID’er: {coverage.get('new_player_ids_without_history',[])}. "
                    'Hent fuld spillerhistorik, før du beregner nye transferforslag.')
     pool = {p['id']:p for p in data['players']}
@@ -380,6 +419,22 @@ def render(*, experimental_mode=False):
         season_prior_config=settings['season_prior_config']
         assist_config=settings['assist_config']
         odds_path=settings['odds_path']
+        if uses_odds:
+            from fpl_model.defensive_odds import build_coverage
+            try:
+                odds_rows,odds_source=(load_odds(odds_path,'the_odds_api') if odds_path else
+                    ([],dict(source='the_odds_api',available_at=now.isoformat(),
+                             retrieved_at=now.isoformat(),failure='no_saved_odds')))
+                for planned_event in events:
+                    preview=build_coverage(data,odds_rows,odds_source,planned_event,
+                                           BaselineConfig(),now.isoformat())
+                    st.caption(f"Odds-dækning GW{planned_event}: {preview['usable']}/{preview['expected_fixtures']} "
+                               f"kampe · {preview['bookmaker']} · observation {odds_source.get('available_at','ukendt')}")
+                    if preview['usable']<preview['expected_fixtures']:
+                        reasons=dict(Counter(f['reason'] for f in preview['fixtures'] if f['status']!='odds'))
+                        st.warning(f'Kampe uden godkendte odds bruger markeret baseline-fallback: {reasons}.')
+            except (ValueError,OSError,KeyError) as exc:
+                st.error(f'Odds-dækning kunne ikke verificeres ({type(exc).__name__}). Vælg baseline eller et andet gemt snapshot.')
         with st.expander('Beregningsindstillinger og antagelser'):
             draws=st.selectbox('Scenarier',[3000,1000,500,10000])
             seed=st.number_input('Seed',min_value=0,max_value=2147483647,value=42,step=1)
@@ -388,7 +443,7 @@ def render(*, experimental_mode=False):
     request=(str(chosen),data.get('manifest_sha256'),tuple(events),model,str(odds_path),str(set_piece_config),str(set_piece_path),str(bonus_config),str(season_prior_config),str(assist_config),draws,int(seed),availability_policy,json.dumps([assumptions,sensitivity,roles],sort_keys=True))
     signature=(request,json.dumps(profile,sort_keys=True),mode,maximum,total,hits,tuple(sorted(locked)),tuple(sorted(excluded)),json.dumps(chip_plan,sort_keys=True))
     st.caption(f"GW{events[0]}–{events[-1]} · {mode} · højst {int(maximum)} transfers {'pr. GW' if sequential else 'nu'} · {'hits tilladt' if hits else 'uden hits'} · {model}")
-    if st.button('Sammenlign transferforslag',type='primary',disabled=history_gap):
+    if st.button('Sammenlign transferforslag',type='primary',disabled=readiness['status']=='blocked'):
         if error:st.error(error)
         else:
             try:

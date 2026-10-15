@@ -25,6 +25,29 @@ def metric_rows(variants,group=None):
     return rows
 
 
+def preferred_review_index(choices,context,now):
+    """Show the latest officially completed GW before an unfinished one."""
+    eligible=[]
+    for i,choice in enumerate(choices):
+        if utc(choice['deadline_at'])>utc(now):
+            continue
+        if context is not None and event_readiness(context,choice['event'])['status']=='context_final_labels_still_required':
+            eligible.append(i)
+    if eligible:
+        return max(eligible,key=lambda i:(choices[i]['event'],utc(choices[i]['origin'])))
+    past=[i for i,c in enumerate(choices) if utc(c['deadline_at'])<=utc(now)]
+    return past[-1] if past else len(choices)-1
+
+
+def outcome_source_reference(data):
+    """The label capture may predate the chosen prices/deadline context."""
+    history=(data.get('input_sources') or {}).get('history') or {}
+    return dict(snapshot_id=history.get('snapshot_id',data.get('snapshot_id')),
+                snapshot_path=history.get('snapshot_path',data.get('snapshot_path')),
+                manifest_sha256=history.get('manifest_sha256',data.get('manifest_sha256')),
+                as_of_at=history.get('available_at',data.get('as_of_at')))
+
+
 @st.cache_data(show_spinner=False)
 def _catalog(root,fingerprint):
     return reviewable_forecasts(root)
@@ -39,18 +62,16 @@ def show_forecast_review(root,data):
         if not choices:
             st.info('Ingen gemte reelle prognoser til efterkontrol endnu.');return
         now=datetime.now(timezone.utc)
-        # Prefer the latest forecast for the most recent elapsed deadline, not a best-scoring run.
-        past=[i for i,c in enumerate(choices) if utc(c['deadline_at'])<=now]
-        index=past[-1] if past else len(choices)-1
-        chosen=st.selectbox('Prognose til efterkontrol',choices,index=index,
-            format_func=lambda c:f"GW{c['event']} · {c['origin']} · {'gemte simulationer' if c['format']=='saved_scenarios' else 'gemte nøgletal'}",key='review_forecast_choice')
-        st.caption(f"Prognosetid: {chosen['origin']} · officiel deadline i prognosen: {chosen['deadline_at']}. Ingen genberegning af prognoser eller automatiske downloads.")
         context=None
         try:
             paths=snapshot_paths(Path(root)/'data/raw')
             if paths:context=read_official_context(paths[0])
         except (ValueError,OSError,KeyError,SnapshotIntegrityError) as exc:
             st.error(f'Kampkontekst kunne ikke verificeres: {exc}')
+        index=preferred_review_index(choices,context,now)
+        chosen=st.selectbox('Prognose til efterkontrol',choices,index=index,
+            format_func=lambda c:f"GW{c['event']} · {c['origin']} · {'gemte simulationer' if c['format']=='saved_scenarios' else 'gemte nøgletal'}",key='review_forecast_choice')
+        st.caption(f"Prognosetid: {chosen['origin']} · officiel deadline i prognosen: {chosen['deadline_at']}. Ingen genberegning af prognoser eller automatiske downloads.")
         if context:
             readiness=event_readiness(context,chosen['event'])
             st.write(f"**Officiel rundestatus:** {readiness['finished']}/{readiness['fixtures']} kampe endelige · "
@@ -62,7 +83,7 @@ def show_forecast_review(root,data):
             unfinished=[f for f in readiness['remaining'] if not f['finished_provisional']]
             if unfinished:st.dataframe(pd.DataFrame(unfinished),hide_index=True)
         else:st.warning('Ingen verificeret lokal kampkontekst til rundestatus.')
-        source={k:data.get(k) for k in ('snapshot_id','snapshot_path','manifest_sha256','as_of_at')}
+        source=outcome_source_reference(data)
         st.caption(f"Udfald læses fra det valgte officielle datagrundlag: {source['snapshot_id']} · observeret {source['as_of_at'] or 'ukendt'}. En nyere kampkontekst opgraderer ikke ældre spillerlabels.")
         if chosen['format']=='legacy_summary':
             st.caption('Ældre prognose: middelværdier, DNP og percentiler er gemt; fulde scenarier mangler. Derfor vises CRPS som manglende. Oprindelig oprettelsestid er deklareret, ikke uafhængigt bevist.')

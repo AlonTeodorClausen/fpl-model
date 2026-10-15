@@ -31,7 +31,13 @@ def test_explicit_refresh_button_selects_new_context_and_displays_separate_histo
     monkeypatch.setattr(refresh,'select_history_snapshot',lambda paths,chosen,**kwargs:old)
     def capture(root,**kwargs):
         calls.append(kwargs['season']);available.append(fresh);return fresh
-    monkeypatch.setattr(refresh,'capture_official_context',capture)
+    def smart(root,**kwargs):
+        chosen=capture(root,**kwargs)
+        return dict(status='context_only',context_snapshot=chosen,selected_snapshot=chosen,
+                    history_snapshot=old,history_required=False,changed_fixture_ids=[])
+    monkeypatch.setattr(refresh,'refresh_official_data',smart,raising=False)
+    monkeypatch.setattr(refresh,'capture_official_context',lambda *a,**k:(_ for _ in ()).throw(
+        AssertionError('The button must use smart refresh')))
     base=source.load_data(old)
     def composite(context,history,**kwargs):
         assert context==fresh and history==old
@@ -47,6 +53,32 @@ def test_explicit_refresh_button_selects_new_context_and_displays_separate_histo
     assert not app.exception and calls==['2026-2027']
     assert next(s for s in app.selectbox if s.label=='Officielt datagrundlag').value==fresh
     assert any('Kampvis historik' in x.value for x in app.caption)
+
+
+def test_my_team_shows_deadline_readiness_and_after_round_entry(monkeypatch,tmp_path):
+    from datetime import datetime,timezone
+    setup(monkeypatch,tmp_path)
+    import fpl_model.prototype_data as source
+    data=source.load_data(None)
+    data['as_of_at']=datetime.now(timezone.utc).isoformat()
+    data['input_sources']=dict(history=dict(snapshot_id='h',available_at=data['as_of_at']),
+                               official_context=dict(snapshot_id='c',available_at=data['as_of_at']))
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    assert not app.exception
+    assert any('Klar til GW' in x.value for x in app.success)
+    assert any('Efter runden' in e.label for e in app.expander)
+
+
+def test_experimental_odds_model_shows_fallback_coverage_before_planning(monkeypatch,tmp_path):
+    setup(monkeypatch,tmp_path)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    next(r for r in app.radio if r.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
+    next(r for r in app.radio if r.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
+    next(w for w in app.selectbox if w.label=='Prognosemodel').set_value(
+        'Defensiv oddsvariant · William Hill').run(timeout=30)
+    assert not app.exception
+    assert any('Odds-dækning GW5' in x.value and '0/' in x.value for x in app.caption)
+    assert any('baseline-fallback' in x.value for x in app.warning)
 
 
 def test_finished_fixture_warns_and_blocks_plan_until_full_history(monkeypatch,tmp_path):

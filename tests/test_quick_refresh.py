@@ -108,3 +108,54 @@ def test_history_selection_uses_latest_complete_capture_not_future_or_context(tm
     assert latest_history_snapshot([early,latest,future],early,season='2026-2027')==early
     assert select_history_snapshot([early,latest,context,future],context,season='2026-2027')==latest
     assert select_history_snapshot([early,latest,context,future],early,season='2026-2027')==early
+
+
+def test_smart_refresh_skips_player_requests_when_history_is_current(tmp_path,monkeypatch):
+    from fpl_model import quick_refresh
+    prior=_snapshot(tmp_path/'raw','2026-10-10T10:00:00Z',history=True)
+    fresh=_snapshot(tmp_path/'raw','2026-10-14T10:00:00Z',history=False,player_price=62)
+    monkeypatch.setattr(quick_refresh,'capture_official_context',lambda *a,**k:fresh)
+    def forbidden(*a,**k):raise AssertionError('No player-history requests needed')
+    monkeypatch.setattr('fpl_model.full_player_capture.capture_all_players',forbidden)
+    result=quick_refresh.refresh_official_data(tmp_path/'raw',season='2026-2027',known_paths=[prior])
+    assert result['status']=='context_only' and result['selected_snapshot']==fresh
+    assert result['history_snapshot']==prior and result['history_required'] is False
+    assert verify_snapshot(prior)['run_metadata']['overall']=='complete'
+
+
+def test_smart_refresh_fetches_history_after_changed_fixture_and_keeps_context(tmp_path,monkeypatch):
+    from fpl_model import quick_refresh
+    prior=_snapshot(tmp_path/'raw','2026-10-10T10:00:00Z',history=True)
+    fresh=_snapshot(tmp_path/'raw','2026-10-16T10:00:00Z',history=False,finished=True)
+    complete=_snapshot(tmp_path/'raw','2026-10-16T11:00:00Z',history=True,finished=True)
+    monkeypatch.setattr(quick_refresh,'capture_official_context',lambda *a,**k:fresh)
+    calls=[];progress=[]
+    def capture(root,**kwargs):
+        calls.append(kwargs['season'])
+        kwargs['progress'](dict(completed=1,total=1,status='success'))
+        return complete
+    monkeypatch.setattr('fpl_model.full_player_capture.capture_all_players',capture)
+    result=quick_refresh.refresh_official_data(tmp_path/'raw',season='2026-2027',known_paths=[prior],progress=progress.append)
+    assert calls==['2026-2027'] and result['status']=='history_complete'
+    assert result['context_snapshot']==fresh and result['selected_snapshot']==complete
+    assert result['changed_fixture_ids']==[12]
+    assert [row['stage'] for row in progress]==['context','history','player','complete']
+
+
+def test_smart_refresh_never_selects_partial_player_capture(tmp_path,monkeypatch):
+    from fpl_model import quick_refresh
+    prior=_snapshot(tmp_path/'raw','2026-10-10T10:00:00Z',history=True)
+    fresh=_snapshot(tmp_path/'raw','2026-10-16T10:00:00Z',history=False,finished=True)
+    clock=lambda:datetime.fromisoformat('2026-10-16T11:00:00+00:00')
+    writer=SnapshotWriter(tmp_path/'raw',clock=clock)
+    writer.set_run_metadata(dict(purpose='official_full_player_history',season='2026-2027',
+                                 overall='partial',player_count='1',successful_players='0'))
+    writer.write_raw('fpl_api/bootstrap_static.json',b'{}',source='fpl_api',required=True,
+                     request_started_at=clock(),retrieved_at=clock(),http_status=200)
+    partial=writer.finalize()
+    monkeypatch.setattr(quick_refresh,'capture_official_context',lambda *a,**k:fresh)
+    monkeypatch.setattr('fpl_model.full_player_capture.capture_all_players',lambda *a,**k:partial)
+    result=quick_refresh.refresh_official_data(tmp_path/'raw',season='2026-2027',known_paths=[prior])
+    assert result['status']=='history_partial' and result['selected_snapshot']==fresh
+    assert result['history_snapshot']==prior and result['attempted_history_snapshot']==partial
+    assert verify_snapshot(partial)['run_metadata']['overall']=='partial'
