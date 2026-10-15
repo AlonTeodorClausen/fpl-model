@@ -1,9 +1,10 @@
 """ID/link → public deadline squad preview → explicit local draft."""
 import pandas as pd
 import streamlit as st
-from fpl_model.team_import import capture_team,make_draft
+from fpl_model.team_import import capture_team,make_draft,parse_team_id
 from fpl_model.my_team import load_profile
 from fpl_model.ui.guest_state import guest_root
+from fpl_model.ui.guest_limits import GuestLimitError,claim_guest_job
 
 
 def render_import(data,root,apply_draft,*,guest=False):
@@ -14,11 +15,18 @@ def render_import(data,root,apply_draft,*,guest=False):
     st.caption('Find dit ID i adressen på FPL’s pointside. Ingen adgangskode eller login kræves.')
     if st.button('Hent hold fra FPL',type='primary'):
         st.session_state.pop('team_import_preview',None)
+        permit=None
         try:
+            if guest:
+                parse_team_id(value)
+                permit=claim_guest_job('import')
             with st.spinner('Henter den seneste offentlige opstilling …'):
                 capture_root=guest_root() if guest else root
                 st.session_state['team_import_preview']=capture_team(value,capture_root/'data/raw')
+        except GuestLimitError as exc:st.warning(str(exc))
         except (ValueError,OSError) as exc:st.error(str(exc))
+        finally:
+            if permit is not None:permit.release()
     imported=st.session_state.get('team_import_preview')
     if imported:
         st.write(f"**{imported['name']}** · hold #{imported['entry_id']} · offentlig opstilling fra **GW{imported['event']}**")

@@ -21,7 +21,8 @@ from fpl_model.transfer_planner import forecast_bundle, compare_packages, save_r
 from fpl_model.sequence_planner import compare_sequences, compare_sensitivity
 from fpl_model.ui.strategy import availability_controls, scenario_records, show_sequence_report
 from fpl_model.ui.team_import import render_import
-from fpl_model.ui.guest_state import guest_mode, guest_root
+from fpl_model.ui.guest_state import guest_mode, guest_root, parse_guest_profile_bytes
+from fpl_model.ui.guest_limits import GuestLimitError,claim_guest_job
 from fpl_model.ui.decision_summary import immediate_decision
 from fpl_model.ui.presentation import pitch_html, show_lineup_pitch, transfer_card, summary_metrics
 
@@ -183,7 +184,8 @@ def render(*, experimental_mode=False):
     st.html('<div class="lab-kicker">FPL LAB / HOLDPLANLÆGGER</div>')
     st.title('Transferlaboratorium' if experimental_mode else 'Mit hold')
     if not experimental_mode:
-        st.info('Standardprognose · den eksisterende baseline. Modelvalg og forsøg findes under Analyse og eksperimenter.')
+        st.info('Standardprognose · den eksisterende baseline.' if guest else
+                'Standardprognose · den eksisterende baseline. Modelvalg og forsøg findes under Analyse og eksperimenter.')
     if guest:
         st.caption('Gæstetilstand: dit hold og dine forslag gemmes kun i denne browsersession. Download dit hold for at bruge det igen senere.')
     st.caption('Overblik først. Planlæg dine næste transfers, én gameweek ad gangen.')
@@ -220,10 +222,12 @@ def render(*, experimental_mode=False):
     st.subheader('1. Dit hold')
     render_import(data,LOCAL_ROOT,_reset_editor,guest=guest)
     if guest:
-        uploaded=st.file_uploader('Indlæs tidligere downloadet hold (JSON)',type=['json'])
+        uploaded=st.file_uploader('Indlæs tidligere downloadet hold (JSON)',type=['json'],max_upload_size=1)
         if uploaded is not None and st.button('Brug uploadet hold'):
             try:
-                restored=json.loads(uploaded.getvalue())
+                if uploaded.size > 64 * 1024:
+                    raise ValueError('Holdfilen er for stor (maksimalt 64 KB).')
+                restored=parse_guest_profile_bytes(uploaded.getvalue())
                 validate_profile(restored,data['players'],season=season)
                 _reset_editor(restored)
                 st.rerun()
@@ -397,8 +401,8 @@ def render(*, experimental_mode=False):
             st.html(pitch_html(cards))
             st.caption('Statusmærker er FPL’s aktuelle vurdering i det valgte snapshot, ikke modellens startchance.')
         else:
-            st.info('Start med dit hold-ID eller vælg dine spillere under Redigér hold nedenfor.')
-        if error:st.caption('Holdet mangler gyldige oplysninger. Åbn Redigér hold før du beregner forslag.')
+            st.info('Start med dit hold-ID eller vælg dine spillere under Bekræft spillere, salgsværdier og bank nedenfor.')
+        if error:st.caption('Holdet mangler gyldige oplysninger. Åbn Bekræft spillere, salgsværdier og bank før du beregner forslag.')
     st.subheader('2. Planlæg')
     future=[e['id'] for e in data['events'] if utc(e['deadline_time'])>now]
     if not future:
@@ -467,7 +471,7 @@ def render(*, experimental_mode=False):
             except (ValueError,OSError,KeyError) as exc:
                 st.error(f'Odds-dækning kunne ikke verificeres ({type(exc).__name__}). Vælg baseline eller et andet gemt snapshot.')
         with st.expander('Beregningsindstillinger og antagelser'):
-            draws=st.selectbox('Scenarier',[3000,1000,500,10000])
+            draws=st.selectbox('Scenarier',[3000,1000,500] if guest else [3000,1000,500,10000])
             seed=st.number_input('Seed',min_value=0,max_value=2147483647,value=42,step=1)
             st.write('Standardmodellen og priserne bevares. Tilgængelighed følger det valgte scenarie; manuelle GW-antagelser har forrang. '
                      'Chips placeres manuelt. Bænkvægt i kandidatsøgningen: 0,1; Bench Boost værdisætter hele truppen.')
@@ -478,10 +482,12 @@ def render(*, experimental_mode=False):
     if st.button('Sammenlign transferforslag',type='primary',disabled=readiness['status']=='blocked'):
         if error:st.error(error)
         else:
+            permit=None
             try:
                 if chip_plan and not sequential:raise ValueError('Chips kræver Planlægning: Transfers uge for uge.')
                 from fpl_model.chips import validate_chip_plan
                 validate_chip_plan(chip_plan,profile,events,deadlines={e['id']:e['deadline_time'] for e in data['events']},origin_at=now.isoformat())
+                if guest:permit=claim_guest_job('comparison')
                 if st.session_state.get(state_prefix+'forecast_request')!=request:
                     st.session_state[state_prefix+'forecast_request']=request
                     st.session_state[state_prefix+'forecast_origin']=now.isoformat()
@@ -518,7 +524,10 @@ def render(*, experimental_mode=False):
                 st.session_state.update({state_prefix+'transfer_result':report,state_prefix+'transfer_signature':signature,state_prefix+'transfer_output':str(output)})
                 status.success('Sammenligningen er klar i denne session. Download den, hvis du vil gemme den.' if guest else
                                'Sammenligningen er gemt. Dit hold er ikke ændret.')
+            except GuestLimitError as exc:st.warning(str(exc))
             except (ValueError,RuntimeError,OSError) as exc:st.error(str(exc))
+            finally:
+                if permit is not None:permit.release()
     if not guest:
         with st.expander('Åbn tidligere transferforslag'):
             saved=sorted((LOCAL_ROOT/'artifacts/transfers').glob('*/report.json'),reverse=True)
