@@ -87,6 +87,42 @@ def test_guest_team_import_captures_outside_shared_raw_data(monkeypatch, tmp_pat
     assert captured_roots[0] != tmp_path / 'data/raw'
 
 
+def test_guest_requires_an_explicit_active_publication(monkeypatch, tmp_path):
+    ui = setup(monkeypatch, tmp_path)
+    monkeypatch.setenv('FPL_PUBLIC_GUEST_MODE', '1')
+
+    def absent(*_args):
+        raise ValueError('No active public data publication')
+
+    monkeypatch.setattr(ui, 'read_active_public_data', absent)
+    app = AppTest.from_file(APP).run(timeout=30)
+    assert not app.exception
+    assert any('publiceret' in e.value for e in app.error)
+    assert not any(b.label == 'Sammenlign transferforslag' for b in app.button)
+
+
+def test_guest_uses_pinned_context_instead_of_newest_raw_snapshot(monkeypatch, tmp_path):
+    ui = setup(monkeypatch, tmp_path)
+    monkeypatch.setenv('FPL_PUBLIC_GUEST_MODE', '1')
+    import fpl_model.prototype_data as source
+
+    selected = tmp_path / 'older-published'
+    monkeypatch.setattr(source, 'snapshot_paths', lambda *_: [tmp_path / 'newer-unpublished'])
+    monkeypatch.setattr(ui, 'read_active_public_data', lambda *_: dict(
+        publication_id='published-version', context_path=selected, history_path=selected))
+    seen = []
+    original = source.load_data
+
+    def load(path, **kwargs):
+        seen.append(path)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(source, 'load_data', load)
+    app = AppTest.from_file(APP).run(timeout=30)
+    assert not app.exception and seen == [selected]
+    assert any('published-version' in c.value for c in app.caption)
+
+
 def test_guided_homepage_shows_import_and_clear_decision_before_details(monkeypatch, tmp_path):
     setup(monkeypatch, tmp_path)
     app = AppTest.from_file(APP).run(timeout=30)

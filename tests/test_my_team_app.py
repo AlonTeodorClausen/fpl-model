@@ -17,6 +17,9 @@ def setup(monkeypatch,tmp_path):
     # UI storage paths are injectable without touching user profiles/caches.
     import fpl_model.ui.my_team as ui
     monkeypatch.setattr(ui,'LOCAL_ROOT',tmp_path)
+    monkeypatch.setattr(ui,'read_active_public_data',lambda raw,published:dict(
+        publication_id='offline-test',context_path=tmp_path/'snapshot',
+        history_path=tmp_path/'snapshot'),raising=False)
     st.cache_data.clear()
     return ui
 

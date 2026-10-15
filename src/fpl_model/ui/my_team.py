@@ -13,6 +13,7 @@ from fpl_model.models.baseline import BaselineConfig
 from fpl_model.my_team import money, validate_profile, save_profile, load_profile
 from fpl_model import prototype_data
 from fpl_model import quick_refresh
+from fpl_model.public_data import read_active_public_data
 from fpl_model.readiness import assess_deadline_readiness
 from fpl_model.data_sources.fpl_api import FPLSourceError
 from fpl_model.io import SnapshotError
@@ -189,18 +190,30 @@ def render(*, experimental_mode=False):
     if guest:
         st.caption('Gæstetilstand: dit hold og dine forslag gemmes kun i denne browsersession. Download dit hold for at bruge det igen senere.')
     st.caption('Overblik først. Planlæg dine næste transfers, én gameweek ad gangen.')
-    paths = prototype_data.snapshot_paths(LOCAL_ROOT/'data/raw')
-    if not paths:
-        st.error('Intet officielt snapshot. Brug den eksisterende indsamling først.');return
-    pending=st.session_state.pop('pending_official_snapshot_choice',None)
-    if pending in paths and not guest:
-        st.session_state['official_snapshot_choice']=pending
-    chosen = paths[0] if guest else st.sidebar.selectbox('Officielt datagrundlag',paths,index=0,
-                                  format_func=lambda p:p.name,key='official_snapshot_choice')
+    active=None
+    if guest:
+        try:
+            active=read_active_public_data(LOCAL_ROOT/'data/raw',LOCAL_ROOT/'artifacts/public_data')
+        except ValueError:
+            st.error('Der er endnu ikke publiceret et verificeret datagrundlag til gæster. Prøv igen senere.')
+            return
+        chosen=active['context_path']
+        history=active['history_path']
+        paths=[chosen]
+        st.caption(f"Fælles dataversion: {active['publication_id']} · kontrolleret {active.get('checked_at','ukendt')}")
+    else:
+        paths = prototype_data.snapshot_paths(LOCAL_ROOT/'data/raw')
+        if not paths:
+            st.error('Intet officielt snapshot. Brug den eksisterende indsamling først.');return
+        pending=st.session_state.pop('pending_official_snapshot_choice',None)
+        if pending in paths:
+            st.session_state['official_snapshot_choice']=pending
+        chosen=st.sidebar.selectbox('Officielt datagrundlag',paths,index=0,
+                                    format_func=lambda p:p.name,key='official_snapshot_choice')
     try:
         manifest = chosen/'manifest.json'
         season = json.loads(manifest.read_text()).get('run_metadata',{}).get('season','2026-2027') if manifest.exists() else '2026-2027'
-        history=quick_refresh.select_history_snapshot(paths,chosen,season=season)
+        if not guest:history=quick_refresh.select_history_snapshot(paths,chosen,season=season)
         if history is None:
             st.error('Ingen tidligere komplet spillerhistorik før dette snapshot. Hent fuld spillerhistorik først.');return
         history_manifest=history/'manifest.json'
