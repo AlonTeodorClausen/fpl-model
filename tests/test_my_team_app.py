@@ -55,7 +55,7 @@ def test_explicit_refresh_button_selects_new_context_and_displays_separate_histo
     assert any('Kampvis historik' in x.value for x in app.caption)
 
 
-def test_my_team_shows_deadline_readiness_and_after_round_entry(monkeypatch,tmp_path):
+def test_my_team_shows_deadline_readiness_and_review_lives_in_analysis(monkeypatch,tmp_path):
     from datetime import datetime,timezone
     setup(monkeypatch,tmp_path)
     import fpl_model.prototype_data as source
@@ -66,6 +66,8 @@ def test_my_team_shows_deadline_readiness_and_after_round_entry(monkeypatch,tmp_
     app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
     assert not app.exception
     assert any('Klar til GW' in x.value for x in app.success)
+    assert not any('Efter runden' in e.label for e in app.expander)
+    next(r for r in app.radio if r.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
     assert any('Efter runden' in e.label for e in app.expander)
 
 

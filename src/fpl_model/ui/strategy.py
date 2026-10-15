@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from fpl_model.chips import LABELS
 from fpl_model.ui.presentation import show_lineup_pitch, transfer_card, summary_metrics
+from fpl_model.ui.decision_summary import sequence_decision
 
 
 def availability_controls(data,owned,events,labels,*,allow_sensitivity=True):
@@ -66,6 +67,17 @@ def show_sequence_report(report):
     if report.get('scenario_label'):st.warning('Hypotetisk hovedscenarie: '+report['scenario_label'])
     st.info('0 transfers nu kan følges af transfers senere. Behold-alternativet foretager ingen transfers i hele horisonten. '
             'Planen bruger dagens information; genberegn den efter nye nyheder.')
+    decision=sequence_decision(report)
+    st.write(f"**Forslag før GW{decision['event']}**")
+    st.success('Behold holdet denne uge og vurder næste deadline igen.' if decision['count']==0 else
+               f"{decision['count']} transfer(s) nu: {names(decision['out'])} ud · {names(decision['in'])} ind.")
+    summary_metrics([
+        ('Næste GW',f"{decision['next_gw_gain']:+.2f}",'Simuleret gevinst mod behold'),
+        ('Hele horisonten',f"{decision['horizon_gain']:+.2f}",'Simuleret gevinst mod behold'),
+        ('Bank efter denne uge',f"£{decision['bank_after']/10:.1f}m",f"{decision['hits']} pointfradrag i planen")])
+    st.caption(f"Uændret hold: {decision['hold_points']:.2f} simulerede point · foreslået plan: "
+               f"{decision['plan_points']:.2f}. Forslaget vælges efter optimizerens målværdi "
+               f"({decision['objective']:.2f}); små forskelle kan være simulationsstøj.")
     refined=bool(report['packages'][0].get('lineup_policy'))
     st.caption('Målværdien er holdpoint inkl. autosubs og vice i planlægningsscenarier. XI, bænkerækkefølge og anfører/vice '
                'er udtømmende optimeret for hver kandidattrup. Simulerede point bruger separate evalueringsscenarier. '

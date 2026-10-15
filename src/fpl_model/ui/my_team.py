@@ -21,6 +21,8 @@ from fpl_model.transfer_planner import forecast_bundle, compare_packages, save_r
 from fpl_model.sequence_planner import compare_sequences, compare_sensitivity
 from fpl_model.ui.strategy import availability_controls, scenario_records, show_sequence_report
 from fpl_model.ui.team_import import render_import
+from fpl_model.ui.guest_state import guest_mode, guest_root
+from fpl_model.ui.decision_summary import immediate_decision
 from fpl_model.ui.presentation import pitch_html, show_lineup_pitch, transfer_card, summary_metrics
 
 LOCAL_ROOT = ROOT
@@ -87,6 +89,16 @@ def show_report(report):
     first = next(iter(report['players_by_event'].values()))
     pool = {r['player_id']: r for r in first}
     names = lambda ids: ', '.join(pool[i]['name'] for i in ids) or '—'
+    decision = immediate_decision(report)
+    st.write('**Forslag til næste deadline**')
+    st.success('Behold truppen denne uge.' if decision['count']==0 else
+               f"{decision['count']} transfer(s): {names(decision['out'])} ud · {names(decision['in'])} ind.")
+    summary_metrics([
+        ('Næste GW',f"{decision['next_gw_gain']:+.2f}",'Simuleret gevinst mod behold'),
+        ('Hele horisonten',f"{decision['horizon_gain']:+.2f}",'Simuleret gevinst mod behold'),
+        ('Bank efter',f"£{decision['bank_after']/10:.1f}m",f"{decision['hits']} pointfradrag")])
+    st.caption('Forslaget vælges efter optimizerens målværdi; gevinsterne er vurderet i separate simulationer. '
+               'Små forskelle kan være simulationsstøj.')
     rows = []
     for p in report['packages']:
         rows.append(dict(Forslag='Behold holdet' if p['count']==0 else f"{p['count']} transfers",
@@ -167,18 +179,21 @@ def show_report(report):
 
 def render(*, experimental_mode=False):
     state_prefix='lab_' if experimental_mode else ''
+    guest=guest_mode()
     st.html('<div class="lab-kicker">FPL LAB / HOLDPLANLÆGGER</div>')
     st.title('Transferlaboratorium' if experimental_mode else 'Mit hold')
     if not experimental_mode:
         st.info('Standardprognose · den eksisterende baseline. Modelvalg og forsøg findes under Analyse og eksperimenter.')
+    if guest:
+        st.caption('Gæstetilstand: dit hold og dine forslag gemmes kun i denne browsersession. Download dit hold for at bruge det igen senere.')
     st.caption('Overblik først. Planlæg dine næste transfers, én gameweek ad gangen.')
     paths = prototype_data.snapshot_paths(LOCAL_ROOT/'data/raw')
     if not paths:
         st.error('Intet officielt snapshot. Brug den eksisterende indsamling først.');return
     pending=st.session_state.pop('pending_official_snapshot_choice',None)
-    if pending in paths:
+    if pending in paths and not guest:
         st.session_state['official_snapshot_choice']=pending
-    chosen = st.sidebar.selectbox('Officielt datagrundlag',paths,index=0,
+    chosen = paths[0] if guest else st.sidebar.selectbox('Officielt datagrundlag',paths,index=0,
                                   format_func=lambda p:p.name,key='official_snapshot_choice')
     try:
         manifest = chosen/'manifest.json'
@@ -192,12 +207,35 @@ def render(*, experimental_mode=False):
     except (OSError,ValueError,KeyError) as exc:
         st.error(str(exc));return
     now = datetime.now(timezone.utc)
+    pool = {p['id']:p for p in data['players']}
+    clubs = {t['id']:t.get('short_name',t.get('name',str(t['id']))) for t in data['teams']}
+    labels = {i:f"{p['web_name']} · {clubs[p['team']]} · #{i}" for i,p in pool.items()}
+    season = data.get('season','2026-2027')
+    profile_path = None if guest else LOCAL_ROOT/'data/processed/my_team.json'
+    if 'team_draft' not in st.session_state:
+        try:
+            _reset_editor(load_profile(profile_path) if profile_path and profile_path.exists() else {})
+        except (OSError,ValueError,KeyError) as exc:
+            st.error(f'Gemt hold kunne ikke åbnes: {exc}');_reset_editor({})
+    st.subheader('1. Dit hold')
+    render_import(data,LOCAL_ROOT,_reset_editor,guest=guest)
+    if guest:
+        uploaded=st.file_uploader('Indlæs tidligere downloadet hold (JSON)',type=['json'])
+        if uploaded is not None and st.button('Brug uploadet hold'):
+            try:
+                restored=json.loads(uploaded.getvalue())
+                validate_profile(restored,data['players'],season=season)
+                _reset_editor(restored)
+                st.rerun()
+            except (ValueError,TypeError,KeyError,UnicodeDecodeError) as exc:
+                st.error(f'Holdfilen kunne ikke bruges: {exc}')
     age = (now-utc(data['as_of_at'])).total_seconds()/3600
     history_at=data.get('input_sources',{}).get('history',{}).get('available_at',data['as_of_at'])
     history_gap=data.get('coverage',{}).get('history_refresh_required',False)
-    st.caption(f"Priser, status, kampe og deadlines: {utc(data['as_of_at']).strftime('%d/%m kl. %H:%M UTC')} · {age:.1f} timer gamle")
-    st.caption(f"Kampvis historik: {utc(history_at).strftime('%d/%m kl. %H:%M UTC')} · snapshot {history.name}")
-    st.caption('Opdatering henter først priser, status og kampplan. Spillerhistorikker hentes kun igen, hvis nye eller ændrede kampe/spillere kræver det.')
+    with st.expander('Datagrundlag og hentetider'):
+        st.caption(f"Priser, status, kampe og deadlines: {utc(data['as_of_at']).strftime('%d/%m kl. %H:%M UTC')} · {age:.1f} timer gamle")
+        st.caption(f"Kampvis historik: {utc(history_at).strftime('%d/%m kl. %H:%M UTC')} · snapshot {history.name}")
+        st.caption('Opdatering henter først priser, status og kampplan. Spillerhistorikker hentes kun igen, hvis nye eller ændrede kampe/spillere kræver det.')
     last_refresh=st.session_state.pop('last_official_refresh',None)
     if last_refresh:
         if last_refresh['status']=='context_only':
@@ -208,7 +246,7 @@ def render(*, experimental_mode=False):
             st.error('Spillerhistorikken blev kun delvist hentet. Det nye kontekstsnapshot er bevaret, men nye forslag er blokeret.')
     last_error=st.session_state.pop('last_official_refresh_error',None)
     if last_error:st.error(f'Historikopdatering mislykkedes ({last_error}). Den nye kontekst er bevaret; gamle historikker bruges ikke som nye labels.')
-    if st.button('Hent seneste data'):
+    if not guest and st.button('Hent seneste data'):
         bar=st.progress(0.0)
         status=st.empty()
         def progress(row):
@@ -232,7 +270,7 @@ def render(*, experimental_mode=False):
                 st.session_state['last_official_refresh_error']=type(exc).__name__
                 st.rerun()
             st.error(f'Opdatering mislykkedes ({type(exc).__name__}); det valgte datagrundlag er uændret.')
-    if history_gap:
+    if history_gap and not guest:
         st.caption('Efter en spillet kamp kræves fuld kampvis historik. Det kan tage flere minutter.')
         if st.button('Hent fuld spillerhistorik'):
             from fpl_model.full_player_capture import capture_all_players
@@ -258,8 +296,6 @@ def render(*, experimental_mode=False):
     st.caption(f"Kontekst {readiness['context_age_hours']:.1f} timer · historik {readiness['history_age_hours']:.1f} timer · "
                f"operationel kontekstgrænse {readiness['max_context_age_hours']:.0f} timer. "
                'Odds er valgfrie for standardmodellen og kontrolleres særskilt, når oddsmodellen vælges.')
-    from fpl_model.ui.forecast_review import show_forecast_review
-    show_forecast_review(LOCAL_ROOT,data)
     if history_gap:
         coverage=data['coverage']
         st.warning('Kampvis historik mangler nyligt afsluttede kampe, begyndte kampe eller nye spillere i dette kontekstsnapshot. '
@@ -268,21 +304,10 @@ def render(*, experimental_mode=False):
                    f"reviderede resultater: {coverage.get('revised_result_fixture_ids',[])} · "
                    f"nye spiller-ID’er: {coverage.get('new_player_ids_without_history',[])}. "
                    'Hent fuld spillerhistorik, før du beregner nye transferforslag.')
-    pool = {p['id']:p for p in data['players']}
-    clubs = {t['id']:t.get('short_name',t.get('name',str(t['id']))) for t in data['teams']}
-    labels = {i:f"{p['web_name']} · {clubs[p['team']]} · #{i}" for i,p in pool.items()}
-    season = data.get('season','2026-2027')
-    profile_path = LOCAL_ROOT/'data/processed/my_team.json'
-    if 'team_draft' not in st.session_state:
-        try:
-            _reset_editor(load_profile(profile_path) if profile_path.exists() else {})
-        except (OSError,ValueError,KeyError) as exc:
-            st.error(f'Gemt hold kunne ikke åbnes: {exc}');_reset_editor({})
     overview = st.container()
-    with st.expander('Redigér hold · import, spillere og økonomi', expanded=not bool(st.session_state['team_draft'].get('players'))):
-        render_import(data,LOCAL_ROOT,_reset_editor)
+    with st.expander('Bekræft spillere, salgsværdier og bank', expanded=not bool(st.session_state['team_draft'].get('players'))):
         c1,c2,c3 = st.columns(3)
-        if c1.button('Genindlæs gemt hold',disabled=not profile_path.exists()):
+        if not guest and c1.button('Genindlæs gemt hold',disabled=not profile_path.exists()):
             try:_reset_editor(load_profile(profile_path))
             except (OSError,ValueError,KeyError) as exc:st.error(str(exc))
         if c2.button('Indlæs eksempelhold fra billedet'):
@@ -341,8 +366,14 @@ def render(*, experimental_mode=False):
         if st.button('Gem hold'):
             if error:st.error(error)
             else:
-                save_profile(profile,profile_path);st.session_state['team_draft']=profile
-                st.success('Holdet er gemt lokalt. Forslag ændrer ikke dit hold automatisk.')
+                if not guest:save_profile(profile,profile_path)
+                st.session_state['team_draft']=profile
+                st.success('Holdet er gemt i denne session.' if guest else
+                           'Holdet er gemt lokalt. Forslag ændrer ikke dit hold automatisk.')
+    if guest and not error:
+        st.download_button('Download mit hold (JSON)',
+            json.dumps(profile,ensure_ascii=False,indent=2,allow_nan=False),
+            file_name='mit-fpl-hold.json',mime='application/json')
     with overview:
         future_events=[e for e in data['events'] if utc(e['deadline_time'])>now]
         next_event=min(future_events,key=lambda e:e['id']) if future_events else None
@@ -368,12 +399,12 @@ def render(*, experimental_mode=False):
         else:
             st.info('Start med dit hold-ID eller vælg dine spillere under Redigér hold nedenfor.')
         if error:st.caption('Holdet mangler gyldige oplysninger. Åbn Redigér hold før du beregner forslag.')
-    st.subheader('Din næste beslutning')
+    st.subheader('2. Planlæg')
     future=[e['id'] for e in data['events'] if utc(e['deadline_time'])>now]
     if not future:
         st.error('Snapshot har ingen fremtidige deadlines. Opdatér datagrundlaget.');return
     start=min(future)
-    with st.expander('Planlæg transfers · horisont og indstillinger', expanded=False):
+    with st.expander('Vælg horisont og transfergrænser', expanded=not experimental_mode):
         st.write(f'Første GW: **{start}** · transfers foretages nu før næste deadline.')
         available=1
         while available<4 and start+available in future:
@@ -442,6 +473,7 @@ def render(*, experimental_mode=False):
                      'Chips placeres manuelt. Bænkvægt i kandidatsøgningen: 0,1; Bench Boost værdisætter hele truppen.')
     request=(str(chosen),data.get('manifest_sha256'),tuple(events),model,str(odds_path),str(set_piece_config),str(set_piece_path),str(bonus_config),str(season_prior_config),str(assist_config),draws,int(seed),availability_policy,json.dumps([assumptions,sensitivity,roles],sort_keys=True))
     signature=(request,json.dumps(profile,sort_keys=True),mode,maximum,total,hits,tuple(sorted(locked)),tuple(sorted(excluded)),json.dumps(chip_plan,sort_keys=True))
+    st.subheader('3. Forslag')
     st.caption(f"GW{events[0]}–{events[-1]} · {mode} · højst {int(maximum)} transfers {'pr. GW' if sequential else 'nu'} · {'hits tilladt' if hits else 'uden hits'} · {model}")
     if st.button('Sammenlign transferforslag',type='primary',disabled=readiness['status']=='blocked'):
         if error:st.error(error)
@@ -463,8 +495,9 @@ def render(*, experimental_mode=False):
                     from fpl_model.set_piece_roles import load_roles
                     set_piece_source=load_roles(set_piece_path)
                 status=st.empty()
+                forecast_root=(guest_root() if guest else LOCAL_ROOT)/'artifacts/transfer_forecasts'
                 bundle=forecast_bundle(data,events,BaselineConfig(),origin_at=origin,
-                    cache_root=LOCAL_ROOT/'artifacts/transfer_forecasts',draws=draws,seed=int(seed),odds=odds,progress=status.info,
+                    cache_root=forecast_root,draws=draws,seed=int(seed),odds=odds,progress=status.info,
                     availability=scenario_records(assumptions,sensitivity,events,origin,'a'),availability_policy=availability_policy,odds_scope=odds_scope,evolution=evolution,
                     role_assumptions=[dict(r,observed_at=origin) for r in roles],set_piece_config=set_piece_config,set_piece_source=set_piece_source,bonus_config=bonus_config,season_prior_config=season_prior_config,assist_config=assist_config)
                 if sequential:
@@ -473,7 +506,7 @@ def render(*, experimental_mode=False):
                     if sensitivity:
                         report['scenario_label']=f"A · {sensitivity['name']} tilgængelig fra GW{sensitivity['return_a']}"
                         alternative=forecast_bundle(data,events,BaselineConfig(),origin_at=origin,
-                            cache_root=LOCAL_ROOT/'artifacts/transfer_forecasts',draws=draws,seed=int(seed),odds=odds,
+                            cache_root=forecast_root,draws=draws,seed=int(seed),odds=odds,
                             progress=status.info,availability=scenario_records(assumptions,sensitivity,events,origin,'b'),availability_policy=availability_policy,odds_scope=odds_scope,evolution=evolution,
                     role_assumptions=[dict(r,observed_at=origin) for r in roles],set_piece_config=set_piece_config,set_piece_source=set_piece_source,bonus_config=bonus_config,season_prior_config=season_prior_config,assist_config=assist_config)
                         report['sensitivity']=compare_sensitivity(report,alternative,progress=status.info,
@@ -481,21 +514,23 @@ def render(*, experimental_mode=False):
                 else:
                     report=compare_packages(bundle,profile,max_transfers=int(maximum),locked=locked,excluded=excluded,
                                             allow_hits=hits,progress=status.info)
-                output=save_report(report,LOCAL_ROOT/'artifacts/transfers')
+                output=None if guest else save_report(report,LOCAL_ROOT/'artifacts/transfers')
                 st.session_state.update({state_prefix+'transfer_result':report,state_prefix+'transfer_signature':signature,state_prefix+'transfer_output':str(output)})
-                status.success('Sammenligningen er gemt. Dit hold er ikke ændret.')
+                status.success('Sammenligningen er klar i denne session. Download den, hvis du vil gemme den.' if guest else
+                               'Sammenligningen er gemt. Dit hold er ikke ændret.')
             except (ValueError,RuntimeError,OSError) as exc:st.error(str(exc))
-    with st.expander('Åbn tidligere transferforslag'):
-        saved=sorted((LOCAL_ROOT/'artifacts/transfers').glob('*/report.json'),reverse=True)
-        if saved:
-            path=st.selectbox('Gemt sammenligning',saved,format_func=lambda p:p.parent.name)
-            if st.button('Åbn gemt sammenligning'):
-                try:
-                    st.session_state.update({state_prefix+'transfer_result':json.loads(path.read_text()),state_prefix+'transfer_signature':None,state_prefix+'transfer_output':str(path.parent)})
-                except (ValueError,OSError) as exc:st.error(str(exc))
-        else:st.caption('Ingen gemte transferforslag endnu.')
+    if not guest:
+        with st.expander('Åbn tidligere transferforslag'):
+            saved=sorted((LOCAL_ROOT/'artifacts/transfers').glob('*/report.json'),reverse=True)
+            if saved:
+                path=st.selectbox('Gemt sammenligning',saved,format_func=lambda p:p.parent.name)
+                if st.button('Åbn gemt sammenligning'):
+                    try:
+                        st.session_state.update({state_prefix+'transfer_result':json.loads(path.read_text()),state_prefix+'transfer_signature':None,state_prefix+'transfer_output':str(path.parent)})
+                    except (ValueError,OSError) as exc:st.error(str(exc))
+            else:st.caption('Ingen gemte transferforslag endnu.')
     if state_prefix+'transfer_result' in st.session_state:
         if st.session_state.get(state_prefix+'transfer_signature')!=signature:
             st.warning('Viser en gemt beregning med dens oprindelige hold og indstillinger. Kør igen for dine aktuelle valg.')
-        st.caption(f"Rapport: {st.session_state.get(state_prefix+'transfer_output')}")
+        if not guest:st.caption(f"Rapport: {st.session_state.get(state_prefix+'transfer_output')}")
         show_report(st.session_state[state_prefix+'transfer_result'])
