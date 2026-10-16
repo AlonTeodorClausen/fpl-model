@@ -13,9 +13,13 @@ apply_theme()
 with st.sidebar:
     st.html('<div class="lab-brand">FPL<span> / </span>LAB</div>')
     st.caption('DIT HOLD. DIN NÆSTE BESLUTNING.')
-page = st.sidebar.radio('Side', ['Mit hold'] if guest_mode() else ['Mit hold', 'Analyse og eksperimenter'])
+page = st.sidebar.radio('Side', ['Mit hold', 'Model'] if guest_mode() else
+                        ['Mit hold', 'Model', 'Analyse og eksperimenter'])
 if page == 'Mit hold':
     from fpl_model.ui.my_team import render
+    render()
+elif page == 'Model':
+    from fpl_model.ui.model_guide import render
     render()
 else:
     view=st.sidebar.radio('Analysevisning',['Prognoser og evaluering','Transferlaboratorium'])

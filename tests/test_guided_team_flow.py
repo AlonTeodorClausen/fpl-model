@@ -28,7 +28,7 @@ def test_guest_starts_with_own_empty_team_and_no_shared_files(monkeypatch, tmp_p
     assert next(w for w in second.number_input if w.label == 'Bank (£m)').value is None
     assert not any(b.label in ('Hent seneste data', 'Hent fuld spillerhistorik') for b in first.button)
     assert not any(e.label == 'Åbn tidligere transferforslag' for e in first.expander)
-    assert next(r for r in first.radio if r.label == 'Side').options == ['Mit hold']
+    assert next(r for r in first.radio if r.label == 'Side').options == ['Mit hold', 'Model']
     assert not any('Analyse og eksperimenter' in i.value for i in first.info)
     assert not any('Redigér hold' in i.value for i in first.info)
     assert shared.read_bytes() == original
