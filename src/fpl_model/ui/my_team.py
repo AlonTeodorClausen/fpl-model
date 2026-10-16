@@ -25,7 +25,8 @@ from fpl_model.ui.team_import import render_import
 from fpl_model.ui.guest_state import guest_mode, guest_root, parse_guest_profile_bytes
 from fpl_model.ui.guest_limits import GuestLimitError,claim_guest_job
 from fpl_model.ui.decision_summary import immediate_decision
-from fpl_model.ui.presentation import pitch_html, show_lineup_pitch, transfer_card, summary_metrics
+from fpl_model.ui.presentation import (friendly_time, pitch_html, saved_comparison_option,
+                                        show_lineup_pitch, snapshot_option, transfer_card, summary_metrics)
 
 LOCAL_ROOT = ROOT
 POSITIONS = {1: ('Målmand',2), 2: ('Forsvarer',5), 3: ('Midtbane',5), 4: ('Angriber',3)}
@@ -81,13 +82,7 @@ def show_report(report):
         return show_sequence_report(report)
     forecast = report['forecast']
     st.subheader('Transferforslag')
-    st.caption(f"Gemt prognose: {forecast['forecast_origin_at']} · officiel kilde observeret {forecast['source_available_at']} · "
-               f"{forecast['model_version']} · {forecast['draws']} scenarier · seed {forecast['seed']}")
-    st.info('Alle transfers sker nu. Truppen beholdes derefter; XI og anfører vælges separat pr. GW.')
-    st.caption('Forbedring måles mod dit uændrede hold med samme opstillingsmetode. '
-               'Målværdi inkl. autosubs/vice vælges på planlægningsscenarier; holdpoint evalueres på separate scenarier. '
-               'Solver/gap gælder den tilnærmede kandidatsøgning, ikke den samlede transferstrategi.' if report['packages'][0].get('lineup_policy') else
-               'Ældre rapport: målværdien bruger en tilnærmet bænkvægt; autosubs indgår i evalueringen.')
+    st.caption(f"Beregnet {friendly_time(forecast['forecast_origin_at'])} · alle transfers sker nu")
     first = next(iter(report['players_by_event'].values()))
     pool = {r['player_id']: r for r in first}
     names = lambda ids: ', '.join(pool[i]['name'] for i in ids) or '—'
@@ -99,8 +94,7 @@ def show_report(report):
         ('Næste GW',f"{decision['next_gw_gain']:+.2f}",'Simuleret gevinst mod behold'),
         ('Hele horisonten',f"{decision['horizon_gain']:+.2f}",'Simuleret gevinst mod behold'),
         ('Bank efter',f"£{decision['bank_after']/10:.1f}m",f"{decision['hits']} pointfradrag")])
-    st.caption('Forslaget vælges efter optimizerens målværdi; gevinsterne er vurderet i separate simulationer. '
-               'Små forskelle kan være simulationsstøj.')
+    st.caption('Gevinster er simulerede. Små forskelle kan være støj.')
     rows = []
     for p in report['packages']:
         rows.append(dict(Forslag='Behold holdet' if p['count']==0 else f"{p['count']} transfers",
@@ -147,7 +141,10 @@ def show_report(report):
                     'Kampe':len(r['fixture_ids']),'Fallback':r['fallbacks']}))
             st.dataframe(pd.DataFrame(records),hide_index=True)
     with st.expander('Datagrundlag, odds-dækning og antagelser'):
-        st.write(f"Snapshot: {forecast['snapshot_id']}")
+        st.write(f"Beregnet: {forecast['forecast_origin_at']} · officielle data: {forecast['source_available_at']}")
+        st.write(f"Dataversion: {forecast['snapshot_id']} · model: {forecast['model_version']}")
+        st.write(f"{forecast['draws']} scenarier · seed {forecast['seed']}")
+        st.caption('Forbedring måles mod dit uændrede hold. Målværdi og simulerede holdpoint kommer fra separate scenarier; solver/gap gælder kandidatsøgningen.')
         if forecast.get('set_piece_config'):
             st.warning('Gemte dødboldsantagelser – følsomhedsscenarie, ikke kalibrerede frekvenser.')
             st.json(dict(config=forecast['set_piece_config'],source=forecast.get('set_piece_source')))
@@ -182,14 +179,12 @@ def show_report(report):
 def render(*, experimental_mode=False):
     state_prefix='lab_' if experimental_mode else ''
     guest=guest_mode()
-    st.html('<div class="lab-kicker">FPL LAB / HOLDPLANLÆGGER</div>')
+    st.html('<div class="lab-kicker">FPL LAB · HOLDPLANLÆGGER</div>')
     st.title('Transferlaboratorium' if experimental_mode else 'Mit hold')
     if not experimental_mode:
-        st.info('Standardprognose · den eksisterende baseline.' if guest else
-                'Standardprognose · den eksisterende baseline. Modelvalg og forsøg findes under Analyse og eksperimenter.')
+        st.caption('Standardprognose')
     if guest:
-        st.caption('Gæstetilstand: dit hold og dine forslag gemmes kun i denne browsersession. Download dit hold for at bruge det igen senere.')
-    st.caption('Overblik først. Planlæg dine næste transfers, én gameweek ad gangen.')
+        st.caption('Dit hold gemmes kun i denne session. Download det for at beholde det.')
     active=None
     if guest:
         try:
@@ -200,7 +195,6 @@ def render(*, experimental_mode=False):
         chosen=active['context_path']
         history=active['history_path']
         paths=[chosen]
-        st.caption(f"Fælles dataversion: {active['publication_id']} · kontrolleret {active.get('checked_at','ukendt')}")
     else:
         paths = prototype_data.snapshot_paths(LOCAL_ROOT/'data/raw')
         if not paths:
@@ -209,7 +203,8 @@ def render(*, experimental_mode=False):
         if pending in paths:
             st.session_state['official_snapshot_choice']=pending
         chosen=st.sidebar.selectbox('Officielt datagrundlag',paths,index=0,
-                                    format_func=lambda p:p.name,key='official_snapshot_choice')
+                                    format_func=lambda p:('Seneste · ' if p==paths[0] else '')+snapshot_option(p),
+                                    key='official_snapshot_choice')
     try:
         manifest = chosen/'manifest.json'
         season = json.loads(manifest.read_text()).get('run_metadata',{}).get('season','2026-2027') if manifest.exists() else '2026-2027'
@@ -249,10 +244,15 @@ def render(*, experimental_mode=False):
     age = (now-utc(data['as_of_at'])).total_seconds()/3600
     history_at=data.get('input_sources',{}).get('history',{}).get('available_at',data['as_of_at'])
     history_gap=data.get('coverage',{}).get('history_refresh_required',False)
-    with st.expander('Datagrundlag og hentetider'):
-        st.caption(f"Priser, status, kampe og deadlines: {utc(data['as_of_at']).strftime('%d/%m kl. %H:%M UTC')} · {age:.1f} timer gamle")
-        st.caption(f"Kampvis historik: {utc(history_at).strftime('%d/%m kl. %H:%M UTC')} · snapshot {history.name}")
-        st.caption('Opdatering henter først priser, status og kampplan. Spillerhistorikker hentes kun igen, hvis nye eller ændrede kampe/spillere kræver det.')
+    with st.expander('Data og hentetider'):
+        st.write(f"Spillerpriser, status og kampplan: **{friendly_time(data['as_of_at'])}**")
+        st.write(f"Kampvis historik: **{friendly_time(history_at)}**")
+        st.caption('Begge tider er dansk tid. Data opdateres kun, når du vælger det.')
+        st.caption(f"Kontekst {age:.0f} timer gammel · historik {((now-utc(history_at)).total_seconds()/3600):.0f} timer gammel")
+        st.caption('Teknisk reference')
+        st.code(f'Kontekst: {chosen.name}\nHistorik: {history.name}' +
+                (f"\nPublicering: {active['publication_id']}" if active else ''))
+        if active:st.caption(f"Kontrolleret: {active.get('checked_at','ukendt')}")
     last_refresh=st.session_state.pop('last_official_refresh',None)
     if last_refresh:
         if last_refresh['status']=='context_only':
@@ -305,22 +305,19 @@ def render(*, experimental_mode=False):
                 st.error(f'Fuld opdatering mislykkedes ({type(exc).__name__}); rådata fra forsøget bevares lokalt.')
     readiness=assess_deadline_readiness(data,now)
     if readiness['status']=='ready':
-        st.success(f"Klar til GW{readiness['event']} · officiel deadline {readiness['deadline_at']} · officielle inputs dækket.")
+        st.success(f"Klar til GW{readiness['event']} · deadline {friendly_time(readiness['deadline_at'])} dansk tid")
     elif readiness['status']=='attention':
         st.warning(f"Kontrollér data før GW{readiness['event']} · årsager: {', '.join(readiness['reasons'])}.")
     else:
         st.error(f"Ikke klar til nye forslag · årsager: {', '.join(readiness['reasons'])}.")
-    st.caption(f"Kontekst {readiness['context_age_hours']:.1f} timer · historik {readiness['history_age_hours']:.1f} timer · "
-               f"operationel kontekstgrænse {readiness['max_context_age_hours']:.0f} timer. "
-               'Odds er valgfrie for standardmodellen og kontrolleres særskilt, når oddsmodellen vælges.')
     if history_gap:
         coverage=data['coverage']
-        st.warning('Kampvis historik mangler nyligt afsluttede kampe, begyndte kampe eller nye spillere i dette kontekstsnapshot. '
-                   f"Begyndte kamp-ID’er: {coverage.get('newly_started_fixture_ids',[])} · "
-                   f"afsluttede kamp-ID’er: {coverage.get('newly_finished_fixture_ids',[])} · "
-                   f"reviderede resultater: {coverage.get('revised_result_fixture_ids',[])} · "
-                   f"nye spiller-ID’er: {coverage.get('new_player_ids_without_history',[])}. "
-                   'Hent fuld spillerhistorik, før du beregner nye transferforslag.')
+        st.warning('Spillerhistorikken mangler nyligt afsluttede kampe eller ændringer. Hent fuld historik før nye forslag.')
+        with st.expander('Hvilke data mangler?'):
+            st.write(dict(begyndte_kampe=coverage.get('newly_started_fixture_ids',[]),
+                          afsluttede_kampe=coverage.get('newly_finished_fixture_ids',[]),
+                          reviderede_resultater=coverage.get('revised_result_fixture_ids',[]),
+                          nye_spillere=coverage.get('new_player_ids_without_history',[])))
     overview = st.container()
     with st.expander('Bekræft spillere, salgsværdier og bank', expanded=not bool(st.session_state['team_draft'].get('players'))):
         c1,c2,c3 = st.columns(3)
@@ -397,12 +394,12 @@ def render(*, experimental_mode=False):
         ids=list(dict.fromkeys(i for i,_ in selected if i in pool))
         summary_metrics([
             ('Næste deadline',f"GW{next_event['id']}" if next_event else 'Ukendt',
-             utc(next_event['deadline_time']).strftime('%d/%m · %H:%M UTC') if next_event else 'Opdatér kampkontekst'),
+             friendly_time(next_event['deadline_time']) + ' dansk tid' if next_event else 'Opdatér kampkontekst'),
             ('Bank',f'£{bank:.1f}m' if bank is not None else 'Udfyld','Dit transferbudget'),
             ('Gratis transfers',str(free) if free is not None else 'Udfyld','Til rådighed nu'),
             ('Din trup',f'{len(ids)} / 15','Spillere valgt')])
         st.subheader('Dit holdoverblik')
-        st.caption('Truppen vist efter position. Anbefalet XI, bænk og anfører vises i transferforslagene efter beregning.')
+        st.caption('Trup efter position · anbefalet XI vises i forslaget')
         if ids:
             cards=[]
             for i in ids:
@@ -412,7 +409,8 @@ def render(*, experimental_mode=False):
                 cards.append(dict(id=i,name=p['web_name'],position=p['element_type'],
                     detail=f"{clubs[p['team']]} · køb £{p['now_cost']/10:.1f}m",flag=flag))
             st.html(pitch_html(cards))
-            st.caption('Statusmærker er FPL’s aktuelle vurdering i det valgte snapshot, ikke modellens startchance.')
+            if any(card['flag'] for card in cards):
+                st.caption('Statusmærker kommer fra FPL og er ikke modellens startchance.')
         else:
             st.info('Start med dit hold-ID eller vælg dine spillere under Bekræft spillere, salgsværdier og bank nedenfor.')
         if error:st.caption('Holdet mangler gyldige oplysninger. Åbn Bekræft spillere, salgsværdier og bank før du beregner forslag.')
@@ -437,7 +435,7 @@ def render(*, experimental_mode=False):
         owned=[i for i,_ in selected if i in pool]
         locked=st.multiselect('Behold disse spillere',sorted(set(owned)),format_func=labels.get)
         excluded=st.multiselect('Udeluk fra forslag',sorted(pool,key=labels.get),format_func=labels.get)
-        st.caption('Behold/udeluk gælder alle valgte GWs. Udelukker du en ejet spiller, skal forslagene sælge ham nu; behold-referencen ændres ikke.')
+        st.caption('Behold/udeluk gælder hele horisonten.')
         total=st.number_input('Maksimalt antal transfers i hele horisonten',min_value=0,max_value=60,value=4,step=1) if sequential else int(maximum)
         availability_policy='hold_current'
         if len(events)>1:
@@ -491,8 +489,9 @@ def render(*, experimental_mode=False):
     request=(str(chosen),data.get('manifest_sha256'),tuple(events),model,str(odds_path),str(set_piece_config),str(set_piece_path),str(bonus_config),str(season_prior_config),str(assist_config),draws,int(seed),availability_policy,json.dumps([assumptions,sensitivity,roles],sort_keys=True))
     signature=(request,json.dumps(profile,sort_keys=True),mode,maximum,total,hits,tuple(sorted(locked)),tuple(sorted(excluded)),json.dumps(chip_plan,sort_keys=True))
     st.subheader('3. Forslag')
-    st.caption(f"GW{events[0]}–{events[-1]} · {mode} · højst {int(maximum)} transfers {'pr. GW' if sequential else 'nu'} · {'hits tilladt' if hits else 'uden hits'} · {model}")
-    if st.button('Sammenlign transferforslag',type='primary',disabled=readiness['status']=='blocked'):
+    st.caption(f"GW{events[0]}–{events[-1]} · {mode.lower()} · højst {int(maximum)} transfers {'pr. GW' if sequential else 'nu'} · {'hits mulige' if hits else 'ingen hits'}")
+    if st.button('Sammenlign transferforslag',type='primary',use_container_width=True,
+                 disabled=readiness['status']=='blocked'):
         if error:st.error(error)
         else:
             permit=None
@@ -545,7 +544,8 @@ def render(*, experimental_mode=False):
         with st.expander('Åbn tidligere transferforslag'):
             saved=sorted((LOCAL_ROOT/'artifacts/transfers').glob('*/report.json'),reverse=True)
             if saved:
-                path=st.selectbox('Gemt sammenligning',saved,format_func=lambda p:p.parent.name)
+                path=st.selectbox('Gemt sammenligning',saved,
+                                  format_func=lambda p:f'{saved.index(p)+1}. {saved_comparison_option(p)}')
                 if st.button('Åbn gemt sammenligning'):
                     try:
                         st.session_state.update({state_prefix+'transfer_result':json.loads(path.read_text()),state_prefix+'transfer_signature':None,state_prefix+'transfer_output':str(path.parent)})
@@ -554,5 +554,4 @@ def render(*, experimental_mode=False):
     if state_prefix+'transfer_result' in st.session_state:
         if st.session_state.get(state_prefix+'transfer_signature')!=signature:
             st.warning('Viser en gemt beregning med dens oprindelige hold og indstillinger. Kør igen for dine aktuelle valg.')
-        if not guest:st.caption(f"Rapport: {st.session_state.get(state_prefix+'transfer_output')}")
         show_report(st.session_state[state_prefix+'transfer_result'])

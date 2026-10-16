@@ -5,14 +5,15 @@ from fpl_model.team_import import capture_team,make_draft,parse_team_id
 from fpl_model.my_team import load_profile
 from fpl_model.ui.guest_state import guest_root
 from fpl_model.ui.guest_limits import GuestLimitError,claim_guest_job
+from fpl_model.ui.presentation import friendly_time
 
 
 def render_import(data,root,apply_draft,*,guest=False):
-    st.subheader('Hent dit hold fra FPL')
+    st.markdown('**Hent dit hold fra FPL**')
     known=st.session_state.get('team_draft',{}).get('import_provenance',{})
     value=st.text_input('Hold-ID eller FPL-link',value=str(known.get('entry_id','')),
-                        placeholder='3533723 eller https://fantasy.premierleague.com/entry/3533723/event/6',key='team_import_id')
-    st.caption('Find dit ID i adressen på FPL’s pointside. Ingen adgangskode eller login kræves.')
+                        placeholder='Fx 3533723',key='team_import_id',
+                        help='Find ID’et i adressen på FPL’s pointside. Offentlige hold kræver ikke login.')
     if st.button('Hent hold fra FPL',type='primary'):
         st.session_state.pop('team_import_preview',None)
         permit=None
@@ -30,7 +31,7 @@ def render_import(data,root,apply_draft,*,guest=False):
     imported=st.session_state.get('team_import_preview')
     if imported:
         st.write(f"**{imported['name']}** · hold #{imported['entry_id']} · offentlig opstilling fra **GW{imported['event']}**")
-        st.caption(f"Hentet {imported['observed_at']} · deadline {imported['deadline_at']}")
+        st.caption(f"Hentet {friendly_time(imported['observed_at'])} · GW-frist {friendly_time(imported['deadline_at'])} (dansk tid)")
         st.warning('Dette er holdet fra den seneste offentlige deadline. Transfers foretaget bagefter er ikke med. '
                    'Salgsværdier og resterende gratis transfers er ikke offentlige; kontrollér også bank før du planlægger.')
         by_id={p['id']:p for p in imported['players']}
@@ -61,4 +62,4 @@ def render_import(data,root,apply_draft,*,guest=False):
                 st.success('Spillerne er indlæst nedenfor. Kontrollér økonomien og tryk Gem hold. Dit tidligere gemte hold er bevaret indtil da.')
     provenance=st.session_state.get('team_draft',{}).get('import_provenance')
     if provenance:
-        st.caption(f"Indlæst fra FPL #{provenance['entry_id']}, GW{provenance['event']} · ikke en live-synkronisering af transfers efter deadline.")
+        st.caption(f"Indlæst fra FPL · GW{provenance['event']}. Kontrollér transfers siden fristen.")

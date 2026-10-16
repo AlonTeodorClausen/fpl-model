@@ -3,14 +3,15 @@ import json
 import pandas as pd
 import streamlit as st
 from fpl_model.chips import LABELS
-from fpl_model.ui.presentation import show_lineup_pitch, transfer_card, summary_metrics
+from fpl_model.ui.presentation import (friendly_time, show_lineup_pitch,
+                                        summary_metrics, week_plan_html)
 from fpl_model.ui.decision_summary import sequence_decision
 
 
 def availability_controls(data,owned,events,labels,*,allow_sensitivity=True):
     pool={p['id']:p for p in data['players']};records=[];sensitivity=None
     with st.expander('Skader, FPL-nyheder og GW-antagelser'):
-        st.caption(f"Officielt snapshot: {data['snapshot_id']} · hentet/available_at {data['as_of_at']}. Ingen automatisk nyhedshentning.")
+        st.caption(f"Officielle oplysninger fra {friendly_time(data['as_of_at'])} (dansk tid). Nyheder hentes ikke automatisk.")
         st.dataframe(pd.DataFrame([dict(Spiller=labels[i],Status=pool[i].get('status'),
             **{'FPL spillechance næste GW':pool[i].get('chance_of_playing_next_round'),
                'Nyhed':pool[i].get('news') or 'Ingen nyhedstekst',
@@ -61,12 +62,10 @@ def show_sequence_report(report):
     f=report['forecast'];pool={p['player_id']:p for p in next(iter(report['players_by_event'].values()))}
     names=lambda ids:', '.join(pool[i]['name'] for i in ids) or '—'
     st.subheader('Strategi uge for uge')
-    st.caption(f"Prognose fra {f['forecast_origin_at']} · data fra {f['source_available_at']} · {f['model_version']} · {f['draws']} scenarier · seed {f['seed']}")
+    st.caption(f"Beregnet {friendly_time(f['forecast_origin_at'])} · transfers kan også ske i senere GWs")
     if f.get('availability_policy')=='short_doubt_next_gw':
         st.warning('Denne rapport antager, at 75%-tvivl ophører efter første GW. Det er et planlægningsscenarie, ikke en verificeret raskmelding.')
     if report.get('scenario_label'):st.warning('Hypotetisk hovedscenarie: '+report['scenario_label'])
-    st.info('0 transfers nu kan følges af transfers senere. Behold-alternativet foretager ingen transfers i hele horisonten. '
-            'Planen bruger dagens information; genberegn den efter nye nyheder.')
     decision=sequence_decision(report)
     st.write(f"**Forslag før GW{decision['event']}**")
     st.success('Behold holdet denne uge og vurder næste deadline igen.' if decision['count']==0 else
@@ -75,14 +74,8 @@ def show_sequence_report(report):
         ('Næste GW',f"{decision['next_gw_gain']:+.2f}",'Simuleret gevinst mod behold'),
         ('Hele horisonten',f"{decision['horizon_gain']:+.2f}",'Simuleret gevinst mod behold'),
         ('Bank efter denne uge',f"£{decision['bank_after']/10:.1f}m",f"{decision['hits']} pointfradrag i planen")])
-    st.caption(f"Uændret hold: {decision['hold_points']:.2f} simulerede point · foreslået plan: "
-               f"{decision['plan_points']:.2f}. Forslaget vælges efter optimizerens målværdi "
-               f"({decision['objective']:.2f}); små forskelle kan være simulationsstøj.")
+    st.caption('Point er simulerede; små forskelle kan være støj. Genberegn efter nye nyheder.')
     refined=bool(report['packages'][0].get('lineup_policy'))
-    st.caption('Målværdien er holdpoint inkl. autosubs og vice i planlægningsscenarier. XI, bænkerækkefølge og anfører/vice '
-               'er udtømmende optimeret for hver kandidattrup. Simulerede point bruger separate evalueringsscenarier. '
-               'Solver/gap gælder kun den tilnærmede søgning efter transfertrupper — ikke et globalt autosub-optimum.' if refined else
-               'Ældre rapport: XI er valgt med vægtet bænk; autosubs indgår kun i efterfølgende evaluering.')
     rows=[]
     for p in report['packages']:
         rows.append(dict(Strategi=p['label'],**{'Transfers pr. GW':' → '.join(str(s['count']) for s in p['steps']),
@@ -95,8 +88,7 @@ def show_sequence_report(report):
         st.dataframe(pd.DataFrame(rows),hide_index=True)
     best=next((p for p in report['packages'] if p['plan_id']==report['recommendation']['plan_id']),None)
     if best:
-        st.write(f"Bedste fundne plan efter optimizerens målværdi: **{best['label']}**.")
-        st.caption('Bedst inden for de valgte begrænsninger. Små prognoseforskelle kan være simulationsstøj; restværdien af gratis transfers efter horisonten er ikke prissat.')
+        st.write(f"Valgt plan: **{best['label']}**")
     for fail in report['unavailable_packages']:st.caption(f"{fail['first_count']} transfers nu: {fail['reason']}")
     report_id=(report.get('created_at'),f.get('cache_key'),tuple(p['plan_id'] for p in report['packages']))
     if st.session_state.get('sequence_detail_report')!=report_id:
@@ -111,20 +103,20 @@ def show_sequence_report(report):
     if plan.get('hypothetical'):st.warning('Hypotetisk reference: en chip er allerede aktiv på FPL; denne plan uden chip kan ikke vælges.')
     if report['config'].get('chip_plan'):
         st.caption('Chipforskelle er prognoser på den valgte korte horisont, ikke en automatisk optimal chipkalender frem til GW19.')
-    step=plan['steps'][0]
-    transfer_card(plan['label'],names(step['out']),names(step['in']),step['bank_after'],plan['hits'],plan['total_gain'])
-    st.dataframe(pd.DataFrame([dict(GW=s['event'],Ud=names(s['out']),Ind=names(s['in']),**{
-        'Chip':LABELS.get(s.get('chip'),'Ingen'),'Transfers':s['count'],'Almindelige':s.get('ordinary_count',s['count']),'Omlægning':s.get('relocation_count',0),'Bank £m':s['bank_after']/10,'Permanent bank £m':s.get('permanent_bank_after',s['bank_after'])/10,'Salg £m':s['sale_proceeds']/10,
-        'Køb £m':s['purchase_cost']/10,'FT før':s['available'],'Gratis brugt':s['used'],
-        'FT tilbage':s['remaining'],'FT næste GW':s['next_gw'],'Hits':s['hits'],'Heraf eksisterende hits':s.get('existing_hits',0)}) for s in plan['steps']]),hide_index=True)
-    display_rows=[dict(r,chip=LABELS.get(r.get('chip'),'Ingen'),bench_contribution_kind='Bench Boost' if r.get('chip')=='bench_boost' else 'Autosubs') for r in plan['per_gw']]
-    st.dataframe(pd.DataFrame(display_rows).round(2).rename(columns={'chip':'Chip','bench_contribution_kind':'Bænkregel','hits':'Pointfradrag','event':'GW','mean':'Simulerede point, netto',
-        'gain':'Gevinst mod behold','objective':'Målværdi, netto','bench_mean':'Bænkbidrag (autosubs / BB)',
-        'previous_lineup_mean':'Tidligere opstillingsmetode','lineup_gain':'Gevinst fra nyt opstillingsvalg'}),hide_index=True)
+    st.html(week_plan_html(plan['steps'], names, LABELS))
     for step in plan['steps']:
         if step.get('chip')=='free_hit':
             st.info(f"Free Hit GW{step['event']}: dette hold er midlertidigt. Permanent trup efter runden: {names(step['permanent_squad_after'])}. Bank: £{step['permanent_bank_after']/10:.1f}m.")
     _show_lineups(report,plan)
+    with st.expander('Alle tal for ugeplan og point'):
+        st.dataframe(pd.DataFrame([dict(GW=s['event'],Ud=names(s['out']),Ind=names(s['in']),**{
+            'Chip':LABELS.get(s.get('chip'),'Ingen'),'Transfers':s['count'],'Almindelige':s.get('ordinary_count',s['count']),'Omlægning':s.get('relocation_count',0),'Bank £m':s['bank_after']/10,'Permanent bank £m':s.get('permanent_bank_after',s['bank_after'])/10,'Salg £m':s['sale_proceeds']/10,
+            'Køb £m':s['purchase_cost']/10,'FT før':s['available'],'Gratis brugt':s['used'],
+            'FT tilbage':s['remaining'],'FT næste GW':s['next_gw'],'Hits':s['hits'],'Heraf eksisterende hits':s.get('existing_hits',0)}) for s in plan['steps']]),hide_index=True)
+        display_rows=[dict(r,chip=LABELS.get(r.get('chip'),'Ingen'),bench_contribution_kind='Bench Boost' if r.get('chip')=='bench_boost' else 'Autosubs') for r in plan['per_gw']]
+        st.dataframe(pd.DataFrame(display_rows).round(2).rename(columns={'chip':'Chip','bench_contribution_kind':'Bænkregel','hits':'Pointfradrag','event':'GW','mean':'Simulerede point, netto',
+            'gain':'Gevinst mod behold','objective':'Målværdi, netto','bench_mean':'Bænkbidrag (autosubs / BB)',
+            'previous_lineup_mean':'Tidligere opstillingsmetode','lineup_gain':'Gevinst fra nyt opstillingsvalg'}),hide_index=True)
     with st.expander('Hvorfor spiller/bænker modellen min spiller?'):
         owned={p['player_id'] for p in report['profile']['players']}
         pid=st.selectbox('Spiller – spilletid pr. GW',sorted(owned),format_func=lambda i:pool[i]['name'])
@@ -157,6 +149,12 @@ def show_sequence_report(report):
                 Bank=x['bank_after']/10,Hits=x['hits'],Anfører=names([p['lineups'].get(x['event'],p['lineups'].get(str(x['event'])))['captain']])) for x in p['steps']]),hide_index=True)
             _show_lineups(alternative,p,prefix='Scenarie B · ')
     with st.expander('Datagrundlag, odds og antagelser'):
+        st.write(f"Beregnet: {f['forecast_origin_at']} · officielle data: {f['source_available_at']}")
+        st.write(f"Dataversion: {f['snapshot_id']} · model: {f['model_version']}")
+        st.write(f"{f['draws']} scenarier · seed {f['seed']}")
+        st.caption('Behold-alternativet foretager ingen transfers. Forslaget vælges efter optimizerens målværdi; simulerede point beregnes separat.')
+        st.caption('Autosubs og vice indgår i planlægningens holdpoint. Solver/gap beskriver kun kandidatsøgningen, og resterende gratis transfers efter horisonten er ikke prissat.' if refined else
+                   'Ældre rapport: XI er valgt med vægtet bænk; autosubs indgår i evalueringen.')
         if report['forecast'].get('set_piece_config'):
             st.warning('Gemte dødboldsantagelser – følsomhedsscenarie, ikke kalibrerede frekvenser.')
             st.json(dict(config=report['forecast']['set_piece_config'],source=report['forecast'].get('set_piece_source')))
@@ -168,7 +166,6 @@ def show_sequence_report(report):
         if f.get('season_prior_config'):
             st.caption('Eksperiment: sidste sæsons xG/xA-prior. Spilletid/bonus uændret; manglende historik bruger positionsprior.')
             st.json(f['season_prior_config'])
-        st.write(f"Officielt snapshot: {f['snapshot_id']}")
         st.write('Manuelle antagelser:',f.get('availability_assumptions',[]))
         st.write('Scenarieantagelser:',f.get('derived_availability_assumptions',[]))
         for event,c in report['odds_coverage'].items():

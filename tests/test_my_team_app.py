@@ -55,7 +55,7 @@ def test_explicit_refresh_button_selects_new_context_and_displays_separate_histo
     next(b for b in app.button if b.label=='Hent seneste data').click().run(timeout=30)
     assert not app.exception and calls==['2026-2027']
     assert next(s for s in app.selectbox if s.label=='Officielt datagrundlag').value==fresh
-    assert any('Kampvis historik' in x.value for x in app.caption)
+    assert any('Kampvis historik' in x.value for x in app.markdown)
 
 
 def test_my_team_shows_deadline_readiness_and_review_lives_in_analysis(monkeypatch,tmp_path):
@@ -72,6 +72,23 @@ def test_my_team_shows_deadline_readiness_and_review_lives_in_analysis(monkeypat
     assert not any('Efter runden' in e.label for e in app.expander)
     next(r for r in app.radio if r.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
     assert any('Efter runden' in e.label for e in app.expander)
+
+
+def test_main_page_uses_readable_dates_and_keeps_technical_ids_in_details(monkeypatch,tmp_path):
+    from datetime import datetime,timezone
+    setup(monkeypatch,tmp_path)
+    import fpl_model.prototype_data as source
+    data=source.load_data(None)
+    data['as_of_at']=datetime.now(timezone.utc).isoformat()
+    data['input_sources']=dict(history=dict(snapshot_id='h',available_at=data['as_of_at']),
+                               official_context=dict(snapshot_id='c',available_at=data['as_of_at']))
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
+    assert not app.exception
+    assert any('dansk tid' in x.value for x in app.success)
+    assert not any('snapshot' in x.value.lower() for x in app.success)
+    assert not any('offline-test' in x.value for x in app.caption)
+    assert any('Data og hentetider' in e.label for e in app.expander)
+    assert any('Teknisk reference' in x.value for x in app.caption)
 
 
 def test_experimental_odds_model_shows_fallback_coverage_before_planning(monkeypatch,tmp_path):

@@ -120,7 +120,7 @@ def test_guest_uses_pinned_context_instead_of_newest_raw_snapshot(monkeypatch, t
     monkeypatch.setattr(source, 'load_data', load)
     app = AppTest.from_file(APP).run(timeout=30)
     assert not app.exception and seen == [selected]
-    assert any('published-version' in c.value for c in app.caption)
+    assert not any('published-version' in c.value for c in app.caption)
 
 
 def test_guided_homepage_shows_import_and_clear_decision_before_details(monkeypatch, tmp_path):
