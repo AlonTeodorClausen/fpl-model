@@ -1,6 +1,7 @@
 """The model explanation is a read-only, understandable app destination."""
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from test_my_team_app import setup
@@ -36,6 +37,10 @@ def test_model_tab_explains_the_actual_standard_without_refetching(monkeypatch, 
     assert 'odds' in text.lower()
     assert any('Spilletid' in e.label for e in app.expander)
     assert any('Begrænsninger' in e.label for e in app.expander)
+    assert any('posterior' in x.value.lower() for x in app.markdown)
+    assert any('4 starter' in x.value.lower() and '0,636' in x.value for x in app.markdown)
+    assert any('CRPS' in x.value for x in app.markdown)
+    assert any('MILP' in x.value for x in app.markdown)
     assert not any(b.label == 'Sammenlign transferforslag' for b in app.button)
 
 
@@ -64,3 +69,18 @@ def test_guest_can_read_model_explanation_without_shared_data(monkeypatch, tmp_p
     navigation.set_value('Model').run(timeout=30)
     assert not app.exception
     assert any('Sådan virker modellen' in h.value for h in app.title)
+
+
+def test_worked_minutes_example_matches_the_baseline_equations():
+    from fpl_model.models.baseline import BaselineConfig
+    from fpl_model.ui.model_guide import worked_minutes_example
+
+    example = worked_minutes_example(BaselineConfig())
+    assert example['p_start_before_status'] == pytest.approx(4.45 / 7)
+    assert example['p_sub_before_status'] == pytest.approx(1.10 / 7)
+    assert example['p_dnp_before_status'] == pytest.approx(1.45 / 7)
+    assert example['p_start_after_status'] == pytest.approx(.75 * 4.45 / 7)
+    assert example['p_sub_after_status'] == pytest.approx(.75 * 1.10 / 7)
+    assert example['p_dnp_after_status'] == pytest.approx(1 - .75 * 5.55 / 7)
+    assert example['start_minutes'] == pytest.approx(82.4)
+    assert example['sub_minutes'] == pytest.approx(21)
