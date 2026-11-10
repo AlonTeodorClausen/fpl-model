@@ -87,8 +87,11 @@ def evaluate_squad(team, rows, points, participated, *, chip=None):
     xi=team['starters']; bench=team['bench']
     points=np.asarray(points); active=np.asarray(participated,dtype=bool)
     if points.shape!=active.shape or points.shape[1]!=len(rows): raise ValueError('Scenario shape mismatch')
+    n=len(points)
+    attribution={i:dict(xi=0.,autosub=0.,captain=0.,total=0.) for i in xi+bench}
     xi_idx=[idx[i] for i in xi]
     total=(points[:,xi_idx]*active[:,xi_idx]).sum(axis=1).astype(float)
+    for i in xi:attribution[i]['xi']=float((points[:,idx[i]]*active[:,idx[i]]).mean())
     contribution=np.zeros(len(points))
     relevant=xi+bench
     patterns,inverse=np.unique(active[:,[idx[i] for i in relevant]],axis=0,return_inverse=True)
@@ -110,12 +113,22 @@ def evaluate_squad(team, rows, points, participated, *, chip=None):
             if possible: out=candidate
         selected+=out
         mask=inverse==k
-        if selected: contribution[mask]=points[np.ix_(mask,[idx[i] for i in selected])].sum(axis=1)
+        if selected:
+            contribution[mask]=points[np.ix_(mask,[idx[i] for i in selected])].sum(axis=1)
+            if chip!='bench_boost':
+                for i in selected:
+                    attribution[i]['autosub']+=float(points[mask,idx[i]].sum()/n)
     cap,vice=idx[team['captain']],idx[team['vice_captain']]
     extra=np.where(active[:,cap],points[:,cap],np.where(active[:,vice],points[:,vice],0))
     if chip=='bench_boost':
         bi=[idx[i] for i in bench]
         contribution=(points[:,bi]*active[:,bi]).sum(axis=1)
+        for i in bench:attribution[i]['autosub']=float((points[:,idx[i]]*active[:,idx[i]]).mean())
     if chip=='triple_captain':extra=2*extra
+    multiplier=2 if chip=='triple_captain' else 1
+    attribution[team['captain']]['captain']=float((points[:,cap]*active[:,cap]).mean())*multiplier
+    attribution[team['vice_captain']]['captain']=float((points[:,vice]*(~active[:,cap])*active[:,vice]).mean())*multiplier
+    for row in attribution.values():row['total']=sum(row[key] for key in ('xi','autosub','captain'))
     return dict(points=total+contribution+extra,bench_points=contribution,captain_bonus=extra,
+                player_mean_points=attribution,
                 bench_contribution_kind='bench_boost' if chip=='bench_boost' else 'autosubs')

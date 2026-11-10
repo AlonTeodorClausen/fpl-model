@@ -86,14 +86,17 @@ def load_forecasts(path):
 
 
 def _metrics(rows):
+    """Score all point outcomes and intervals only where both bounds exist."""
     if not rows:return dict(n=0,points=None,minutes=None,dnp=None,interval_80=None)
     def errors(field,pred):
         x=np.array([r[pred]-r[field] for r in rows]);return dict(bias=float(x.mean()),mae=float(abs(x).mean()),rmse=float(np.sqrt(np.mean(x*x))))
+    interval_rows=[r for r in rows if r.get('p10') is not None and r.get('p90') is not None]
     return dict(n=len(rows),points=dict(**errors('actual','predicted'),crps=float(np.mean([r['crps'] for r in rows])) if all(r.get('crps') is not None for r in rows) else None),
         minutes=errors('actual_minutes','predicted_minutes'),
         dnp=dict(brier=float(np.mean([(r['p_no_play']-r['actual_dnp'])**2 for r in rows])),
                  predicted=float(np.mean([r['p_no_play'] for r in rows])),observed=float(np.mean([r['actual_dnp'] for r in rows]))),
-        interval_80=dict(n=len(rows),coverage=float(np.mean([r['p10']<=r['actual']<=r['p90'] for r in rows]))))
+        interval_80=dict(n=len(interval_rows),coverage=(float(np.mean([r['p10']<=r['actual']<=r['p90'] for r in interval_rows]))
+                                                        if interval_rows else None)))
 
 
 def select_player_outcome(report,p,observations):

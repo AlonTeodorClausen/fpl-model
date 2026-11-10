@@ -11,6 +11,33 @@ from fpl_model.label_contracts import utc
 
 _MONTHS = ('januar', 'februar', 'marts', 'april', 'maj', 'juni',
            'juli', 'august', 'september', 'oktober', 'november', 'december')
+_READINESS_MESSAGES = {
+    'no_future_deadline': 'Ingen kommende officiel deadline i datagrundlaget',
+    'source_after_check_time': 'En datakilde ligger efter kontrollens tidspunkt',
+    'identity_conflict': 'Konflikt i spiller- eller kampidentitet',
+    'history_refresh_required': 'Hent opdateret kampvis spillerhistorik',
+    'missing_player_histories': 'Nogle spillerhistorikker mangler',
+    'quarantined_player_rows': 'Nogle historikrækker kræver kontrol',
+    'fixtures_in_progress': 'Kampe er stadig i gang',
+    'context_stale': 'Opdatér spillerpriser og kampplan',
+    'odds_coverage_unresolved': 'Odds-dækning kan ikke fastslås',
+    'odds_fallback': 'Nogle kampe bruger prognosen uden odds',
+}
+_QUARANTINE_MESSAGES = {
+    'fixture_not_started': 'Kampens officielle status er ikke afklaret',
+    'unknown_player_id': 'Ukendt spiller-ID',
+    'unknown_fixture_team_id': 'Ukendt hold-ID for kampen',
+    'duplicate_player_fixture': 'Flere rækker for samme spiller og kamp',
+}
+
+
+def readiness_message(reasons):
+    return ' · '.join(_READINESS_MESSAGES.get(reason, 'Datagrundlaget kræver kontrol')
+                    for reason in reasons)
+
+
+def quarantine_reason_label(reason):
+    return _QUARANTINE_MESSAGES.get(reason,'Anden valideringsårsag')
 
 
 def friendly_time(value):
@@ -49,67 +76,68 @@ def _text(value):
     return escape(str(value), quote=True)
 
 
+def _positive_code(value):
+    """Only FPL's numeric codes may be interpolated into official image URLs."""
+    digits = str(value)
+    if isinstance(value, bool) or not digits.isascii() or not digits.isdecimal():
+        return None
+    code = int(digits)
+    return code if code > 0 else None
+
+
+def official_media(players, teams):
+    """Display-only image references from the captured FPL bootstrap identities."""
+    clubs = {team['id']: team for team in teams}
+    result = {}
+    for player in players:
+        club = clubs.get(player.get('team'), {})
+        result[player['id']] = dict(
+            photo_code=_positive_code(player.get('code')),
+            club_code=_positive_code(club.get('code')),
+            club_short=club.get('short_name', ''),
+        )
+    return result
+
+
+def _image_url(kind, code):
+    code = _positive_code(code)
+    if code is None:
+        return None
+    if kind == 'player':
+        # The current Premier League player profiles use this season's portraits.
+        return f'https://resources.premierleague.com/premierleague25/photos/players/110x140/{code}.png'
+    return f'https://resources.premierleague.com/premierleague/badges/70/t{code}.png'
+
+
+def _media_html(player, *, pitch=False):
+    """CSS backgrounds leave initials/club abbreviations visible on image failure."""
+    photo = _image_url('player', player.get('photo_code'))
+    club = _image_url('club', player.get('club_code'))
+    initial = _text(str(player['name'])[:1].upper())
+    club_short = _text(str(player.get('club_short') or '')[:5])
+    avatar_class = 'lab-pitch-avatar' if pitch else 'lab-list-avatar'
+    photo_style = f' style="background-image:url(\'{photo}\')"' if photo else ''
+    club_style = f' style="background-image:url(\'{club}\')"' if club else ''
+    avatar = (f'<span class="{avatar_class}" role="img" aria-label="Spillerfoto: {_text(player["name"])}"'
+              f'{photo_style}><span class="lab-avatar-initial">{initial}</span></span>')
+    badge = (f'<span class="lab-club-mark" role="img" aria-label="Klub: {club_short}"'
+             f'{club_style}><span>{club_short}</span></span>') if club_short else ''
+    return avatar + badge
+
+
 def apply_theme():
-    st.html('''<style>
-    :root { --ink:#17302f; --muted:#667773; --accent:#0a7862; --line:#dbe5df; }
-    [data-testid="stAppViewContainer"] { background:linear-gradient(145deg,#f8faf8 0%,#eef4f1 100%); color:var(--ink); }
-    [data-testid="stHeader"] { background:rgba(248,250,248,.92); }
-    .block-container { max-width:1120px; padding-top:2.1rem; padding-bottom:4rem; }
-    h1,h2,h3 { color:var(--ink); letter-spacing:-.035em; }
-    h1 { font-size:2.65rem !important; font-weight:800 !important; margin-bottom:.6rem !important; }
-    h3 { font-weight:750 !important; margin-top:1.1rem !important; }
-    [data-testid="stSidebar"] { background:#18312f; }
-    [data-testid="stSidebar"] p,[data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] h2 { color:#edf5f8; }
-    [data-testid="stSidebar"] [role="combobox"] { color:#142c40; }
-    [data-testid="stExpander"] { background:#fff; border:1px solid var(--line); border-radius:15px; box-shadow:0 2px 10px #1d433010; }
-    [data-testid="stMetric"] { background:#fff; padding:16px; border:1px solid var(--line); border-radius:14px; }
-    [data-testid="stMetricLabel"] { color:var(--muted); }
-    [data-testid="stBaseButton-primary"] { background:#0a7862; border-color:#0a7862; border-radius:11px; font-weight:700; min-height:2.65rem; }
-    [data-testid="stBaseButton-primary"]:hover { background:#075e4e; border-color:#075e4e; }
-    [data-testid="stBaseButton-secondary"] { border-radius:10px; }
-    .lab-metrics { display:grid; grid-template-columns:repeat(var(--count),minmax(0,1fr)); gap:12px; margin:10px 0 22px; }
-    .lab-metric { background:white; border:1px solid var(--line); border-radius:14px; padding:17px 18px; box-shadow:0 3px 14px #1d433012; }
-    .lab-metric-label { color:#617586; font-size:12px; }
-    .lab-metric-value { font-size:28px; font-weight:780; color:var(--ink); letter-spacing:-1px; margin-top:4px; }
-    .lab-metric-note { font-size:11px; color:#617586; margin-top:3px; }
-    .lab-brand { color:#f4fbff; font-size:24px; font-weight:800; letter-spacing:-1px; padding:12px 0 2px; }
-    .lab-brand span { color:#7bdac1; } .lab-kicker { color:#0a7862; font-size:11px; font-weight:800; letter-spacing:1.8px; text-transform:uppercase; }
-    .lab-pitch { background:repeating-linear-gradient(0deg,#245d4d 0px,#245d4d 82px,#296653 82px,#296653 164px);
-      border:1px solid #1f5848; border-radius:20px; padding:24px 14px; margin:8px 0 20px; position:relative; overflow:hidden; box-shadow:0 14px 32px #16473420; }
-    .lab-pitch:before { content:""; position:absolute; inset:14px; border:1px solid #ffffff30; border-radius:3px; pointer-events:none; }
-    .lab-pitch:after { content:""; position:absolute; width:90px; height:90px; border:1px solid #ffffff30;
-      border-radius:50%; top:45%; left:calc(50% - 45px); pointer-events:none; }
-    .lab-row { display:flex; justify-content:center; gap:10px; position:relative; z-index:1; margin:12px 0 20px; }
-    .lab-player { width:132px; min-width:0; text-align:center; }
-    .lab-shirt { width:35px; height:35px; margin:0 auto 4px; display:block; background:linear-gradient(90deg,#e2f3ed 40%,#67bba3 40%,#67bba3 60%,#e2f3ed 60%); clip-path:polygon(30% 10%,10% 23%,2% 50%,23% 58%,28% 45%,28% 94%,73% 94%,73% 45%,78% 58%,98% 50%,90% 23%,70% 10%,60% 18%,40% 18%); }
-    .lab-player-body { background:#ffffff; border-radius:10px; padding:8px 4px; box-shadow:0 4px 12px #002d2830; }
-    .lab-name { font-weight:750; color:#142c40; font-size:13px; overflow-wrap:anywhere; }
-    .lab-meta { color:#617586; font-size:11px; margin-top:3px; }
-    .lab-stat { color:#087f6f; font-size:12px; font-weight:750; margin-top:3px; }
-    .lab-badge { display:inline-block; background:#142c40; color:white; border-radius:12px; padding:1px 5px; font-size:10px; }
-    .lab-doubt { color:#895400; background:#fff2ce; border-radius:4px; padding:1px 4px; font-size:10px; }
-    .lab-bench { background:#e6edf1; border-radius:12px; padding:8px 12px; margin-bottom:18px; }
-    .lab-bench .lab-row { margin:8px 0; } .lab-bench-title { color:#526a7d; font-size:11px; font-weight:800; letter-spacing:1px; }
-    .lab-transfer { border:1px solid var(--line); border-radius:16px; background:white; padding:20px; margin:8px 0 14px; box-shadow:0 4px 16px #1d433012; }
-    .lab-transfer-title { font-size:18px; font-weight:750; color:#142c40; margin-bottom:10px; }
-    .lab-moves { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
-    .lab-out { color:#9b3b44; } .lab-in { color:#087f6f; }
-    .lab-note { color:#617586; font-size:12px; margin-top:12px; }
-    .lab-weeks { display:grid; gap:9px; margin:12px 0 18px; }
-    .lab-week { display:flex; gap:15px; align-items:flex-start; background:#fff; border:1px solid var(--line); border-radius:13px; padding:13px 16px; }
-    .lab-week-gw { flex:none; min-width:47px; color:#0a7862; font-size:13px; font-weight:800; }
-    .lab-week-action { color:var(--ink); font-size:14px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
-    .lab-week-meta { color:var(--muted); font-size:12px; margin-top:4px; line-height:1.4; }
-    .lab-arrow { color:#0a7862; padding:0 5px; }
-    @media(max-width:640px) { .lab-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; } .lab-metric { padding:12px; } .block-container { padding:1.3rem .8rem; } h1 { font-size:2.2rem !important; }
-      .lab-row { gap:4px; } .lab-pitch { padding:12px 5px; } .lab-name { font-size:11px; }
-      .lab-meta { font-size:10px; } .lab-shirt { width:28px; height:28px; } .lab-player-body { padding:6px 2px; }
-      .lab-moves { grid-template-columns:1fr; gap:8px; } }
-    </style>''')
+    stylesheet = Path(__file__).with_name('theme.css').read_text(encoding='utf-8')
+    st.html('<style>' + stylesheet + '</style>')
 
 
-def pitch_html(players, *, lineup=None):
+def _player_link(player, clickable):
+    pid = player['id']
+    if not clickable or type(pid) is not int or pid <= 0:
+        return None
+    return f'href="?player_id={pid}" aria-label="Se prognose for {_text(player["name"])}"'
+
+
+def pitch_html(players, *, lineup=None, clickable=False):
     """Players use display fields; absence of lineup means positional squad, never XI."""
     pool={p['id']:p for p in players}
     def card(pid,role=''):
@@ -118,23 +146,172 @@ def pitch_html(players, *, lineup=None):
         elif lineup and pid==lineup.get('vice_captain'):badge=' <span class="lab-badge">V</span>'
         warning=f' <span class="lab-doubt">{_text(p["flag"])}</span>' if p.get('flag') else ''
         stat=f'<div class="lab-stat">{p["xp"]:.2f} xP · {p["minutes"]:.0f} min</div>' if p.get('xp') is not None and p.get('minutes') is not None else ''
-        shirt='<div class="lab-shirt" aria-hidden="true"></div>'
-        return f'<div class="lab-player">{shirt}<div class="lab-player-body"><div class="lab-name">{_text(p["name"])}{badge}{warning}</div><div class="lab-meta">{_text(p.get("detail",""))}</div>{stat}<div class="lab-meta">{_text(role)}</div></div></div>'
+        media=f'<div class="lab-pitch-media">{_media_html(p,pitch=True)}</div>'
+        link = _player_link(p, clickable)
+        tag = 'a' if link else 'div'
+        attrs = f' {link}' if link else ''
+        css = ' lab-player-link' if link else ''
+        return f'<{tag} class="lab-player{css}"{attrs}>{media}<div class="lab-player-body"><div class="lab-name">{_text(p["name"])}{badge}{warning}</div><div class="lab-meta">{_text(p.get("detail",""))}</div>{stat}<div class="lab-meta">{_text(role)}</div></div></{tag}>'
     ids=lineup['starters'] if lineup else list(pool)
     rows=['<div class="lab-row">'+''.join(card(i) for i in ids if pool[i]['position']==pos)+'</div>' for pos in range(1,5)]
-    html='<div class="lab-pitch" role="group" aria-label="'+('Startellever' if lineup else 'Trup efter position, ikke en startellever')+'">'+''.join(rows)+'</div>'
+    html='<div class="lab-pitch-scroll"><div class="lab-pitch" role="group" aria-label="'+('Startellever' if lineup else 'Trup efter position, ikke en startellever')+'">'+''.join(rows)+'</div></div>'
     if lineup:
         bench=''.join(card(i,'Reservekeeper' if pool[i]['position']==1 else f'Bænk {lineup["bench"].index(i)}') for i in lineup['bench'])
         html+='<div class="lab-bench"><div class="lab-bench-title">BÆNK · PRIORITERET RÆKKEFØLGE</div><div class="lab-row">'+bench+'</div></div>'
     return html
 
 
-def show_lineup_pitch(lookup,lineup):
-    ids=lineup['starters']+lineup['bench']
-    st.html(pitch_html([dict(id=i,name=lookup[i]['name'],position=lookup[i]['position'],
-        detail=f'£{lookup[i]["price"]/10:.1f}m · {len(lookup[i]["fixture_ids"])} kamp(e)',
-        xp=lookup[i]['xp'],minutes=lookup[i]['expected_minutes']) for i in ids],lineup=lineup))
+def list_html(players, *, lineup=None, clickable=False):
+    """Readable squad/lineup alternative; an absent row is never inferred as DNP."""
+    pool = {p['id']: p for p in players}
+    positions = {1: 'Målmænd', 2: 'Forsvarere', 3: 'Midtbanespillere', 4: 'Angribere'}
+
+    def row(pid, role=''):
+        p = pool[pid]
+        badges = []
+        if lineup and pid == lineup['captain']:
+            badges.append('Anfører')
+        elif lineup and pid == lineup.get('vice_captain'):
+            badges.append('Viceanfører')
+        if p.get('flag'):
+            badges.append(str(p['flag']))
+        badge_html = ''.join(f'<span class="lab-list-badge">{_text(b)}</span>' for b in badges)
+        stat = (f'<span class="lab-list-stat">{p["xp"]:.2f} xP'
+                f'<small>{p["minutes"]:.0f} min</small></span>'
+                if p.get('xp') is not None and p.get('minutes') is not None else '')
+        detail = _text(p.get('detail', ''))
+        link = _player_link(p, clickable)
+        tag = 'a' if link else 'div'
+        attrs = f' {link}' if link else ''
+        css = ' lab-player-link' if link else ''
+        return (f'<{tag} class="lab-list-row{css}"{attrs}>{_media_html(p)}<div class="lab-list-person">'
+                f'<strong>{_text(p["name"])}</strong>{badge_html}'
+                f'<small>{detail}{" · " + _text(role) if role else ""}</small></div>{stat}</{tag}>')
+
+    def section(title, ids):
+        return (f'<section class="lab-list-section"><h4>{_text(title)}</h4>'
+                + ''.join(row(pid) for pid in ids) + '</section>')
+
+    ids = lineup['starters'] if lineup else list(pool)
+    main = ''.join(section(positions[pos], [i for i in ids if pool[i]['position'] == pos])
+                   for pos in positions if any(pool[i]['position'] == pos for i in ids))
+    if lineup:
+        bench = ''.join(row(pid, 'Reservekeeper' if pool[pid]['position'] == 1
+                            else f'Bænk {index}') for index, pid in enumerate(lineup['bench']))
+        main += f'<section class="lab-list-section"><h4>Bænk · rækkefølge</h4>{bench}</section>'
+    label = 'Startellever og bænk' if lineup else 'Trup efter position, ikke en startellever'
+    return f'<div class="lab-list" role="group" aria-label="{label}">{main}</div>'
+
+
+def team_html(players, *, lineup=None, view='Liste', clickable=False):
+    """The same forecast fields in either a compact list or a pitch."""
+    if view == 'Liste':
+        return list_html(players, lineup=lineup, clickable=clickable)
+    if view == 'Bane':
+        return pitch_html(players, lineup=lineup, clickable=clickable)
+    raise ValueError('Ukendt holdvisning')
+
+
+def decision_card_html(decision, *, event, names, stale=False, chip=None, data_attention=False):
+    """A concise entry point derived only from an existing comparison report."""
+    if decision['count']:
+        heading = f'{decision["count"]} transfer' + ('s' if decision['count'] != 1 else '') + ' nu'
+        action = (f'{_text(names(decision["out"]))}<span class="lab-decision-arrow">→</span>'
+                  f'{_text(names(decision["in"]))}')
+        if chip:
+            action += f' · {_text(chip)}'
+    else:
+        heading = f'Behold truppen · {_text(chip)}' if chip else 'Behold holdet denne uge'
+        action = 'Ingen transfers før den næste deadline.'
+    kicker = 'GEMT FORSLAG' if stale else 'DATA SKAL KONTROLLERES' if data_attention else 'NÆSTE TRÆK'
+    stale_note = (' Indstillinger eller hold er ændret. Genberegn før du handler.' if stale else '')
+    data_note = (' Opdatér data og genberegn, før du følger forslaget.' if data_attention else '')
+    css = 'lab-decision lab-decision-stale' if stale or data_attention else 'lab-decision'
+    return (f'<section class="{css}" aria-label="Anbefaling for GW{int(event)}">'
+            f'<div class="lab-decision-kicker">{kicker} · GW{int(event)}</div>'
+            f'<h2>{heading}</h2><p class="lab-decision-action">{action}</p>'
+            f'<div class="lab-decision-stats">'
+            f'<div><small>Næste GW</small><strong>{decision["next_gw_gain"]:+.2f} point</strong></div>'
+            f'<div><small>Hele horisonten</small><strong>{decision["horizon_gain"]:+.2f} point</strong></div>'
+            f'<div><small>Bank efter</small><strong>£{decision["bank_after"]/10:.1f}m</strong></div>'
+            f'<div><small>Fradrag</small><strong>{decision["hits"]} pointfradrag</strong></div>'
+            f'</div><p class="lab-decision-foot">Simulerede holdpoint sammenlignet med dit uændrede hold under de samme prognoser. '
+            f'Små forskelle kan være simulationsstøj.{stale_note}{data_note}</p></section>')
+
+
+def next_step_card_html(*, player_count, profile_error, readiness_status='ready',
+                        price_estimates=False, can_refresh=False):
+    """Explain the next action without implying that an incomplete team is ready."""
+    attention = False
+    if player_count < 15:
+        heading = 'Hent dit hold fra FPL'
+        detail = 'Indtast dit hold-ID nedenfor, eller vælg dine spillere manuelt.'
+    elif profile_error:
+        heading = 'Færdiggør dit hold'
+        detail = 'Tjek bank, gratis transfers, spillere og salgsværdier under “Redigér bank og transfers”, og gem holdet.'
+    elif readiness_status == 'blocked':
+        heading = 'Nye forslag er blokeret'
+        detail = 'Datagrundlaget mangler nødvendige oplysninger. Se advarslen nedenfor.'
+        attention = True
+    elif readiness_status == 'limited':
+        heading = 'Kun foreløbig beregning'
+        detail = 'Opdatér data, eller vælg udtrykkeligt at beregne med ufuldstændig historik.'
+        attention = True
+    elif readiness_status == 'attention':
+        heading = 'Opdatér data før du vælger'
+        detail = ('Brug “Hent seneste data” nedenfor, og kontrollér holdet bagefter.' if can_refresh else
+                  'Datagrundlaget kræver kontrol, før du følger et forslag.')
+        attention = True
+    elif price_estimates:
+        heading = 'Kontrollér salgsværdier'
+        detail = 'Nogle priser er estimater. Ret dem under “Redigér bank og transfers”, før du følger et forslag.'
+        attention = True
+    else:
+        heading = 'Klar til forslag'
+        detail = 'Vælg antal runder nedenfor. Vi sammenligner at beholde holdet med transfermuligheder.'
+    css = 'lab-decision lab-decision-attention' if attention else 'lab-decision lab-decision-empty'
+    return (f'<section class="{css}">'
+            '<div class="lab-decision-kicker">NÆSTE SKRIDT</div>'
+            f'<h2>{heading}</h2><p>{detail}</p></section>')
+
+
+def decision_overview_html(decision, *, event, names, alternatives, weeks,
+                           stale=False, chip=None, data_attention=False):
+    """A report-backed summary; every number comes from the selected plan."""
+    card = decision_card_html(decision, event=event, names=names, stale=stale, chip=chip,
+                              data_attention=data_attention)
+    other_rows = ''.join(
+        f'<div class="lab-alternative"><strong>{_text(p["label"])}</strong>'
+        f'<span>{p["next_gw_gain"]:+.2f} nu · {p["total_gain"]:+.2f} over horisonten'
+        f'{" · " + str(p["hits"]) + " pointfradrag" if p.get("hits") else ""}</span></div>'
+        for p in alternatives[:3])
+    if not other_rows:
+        other_rows = '<p class="lab-note">Ingen andre forskellige forslag i denne beregning.</p>'
+    alternative_panel = ('<aside class="lab-alternatives"><div class="lab-panel-kicker">ANDRE VALG</div>'
+                         '<p>Samme prognoser og begrænsninger</p>' + other_rows + '</aside>')
+    week_cards = ''.join(
+        f'<div class="lab-outlook-week"><span>GW{int(w["event"])}</span>'
+        f'<strong>{w["mean"]:.1f} point</strong>'
+        f'<small>{w["gain"]:+.2f} mod behold</small></div>' for w in weeks)
+    outlook = ('<section class="lab-outlook"><div class="lab-panel-kicker">PLANEN UGE FOR UGE</div>'
+               '<div class="lab-outlook-weeks">' + week_cards + '</div></section>')
+    return '<div class="lab-overview"><div class="lab-overview-top">' + card + alternative_panel + '</div>' + outlook + '</div>'
+
+
+def show_lineup(lookup, lineup, *, view='Liste', media_by_id=None):
+    ids = lineup['starters'] + lineup['bench']
+    players = [dict(id=i, name=lookup[i]['name'], position=lookup[i]['position'],
+                    detail=f'£{lookup[i]["price"]/10:.1f}m · {len(lookup[i]["fixture_ids"])} kamp(e)',
+                    xp=lookup[i]['xp'], minutes=lookup[i]['expected_minutes'],
+                    **((media_by_id or {}).get(i) or {})) for i in ids]
+    st.html(team_html(players, lineup=lineup, view=view))
+    if view == 'Bane':
+        st.caption('Skub banen vandret på en smal skærm for at se alle spillere.')
     st.caption('xP er spillerens egen prognose før anførerbonus. Minutter og point gælder hele GW’en.')
+
+
+def show_lineup_pitch(lookup,lineup):
+    show_lineup(lookup, lineup, view='Bane')
 
 
 def transfer_card(title,outs,ins,bank,hits,gain):

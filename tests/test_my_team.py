@@ -61,3 +61,16 @@ def test_transfer_accounting_hits_and_rollover():
 def test_owned_unselectable_player_can_be_retained():
     p=profile();pool=copy.deepcopy(players());pool[0]['can_select']=False
     mod().validate_profile(p,pool,season='2026-2027')
+
+
+def test_stale_sale_is_reconciled_in_memory_without_editing_saved_profile():
+    p=profile();pool=players();pid=p['players'][0]['player_id']
+    p['players'][0]['selling_price']=pool[0]['now_cost']+1
+    original=copy.deepcopy(p)
+    updated,changed=mod().reconcile_sale_prices(p,pool)
+    assert changed==[pid]
+    assert updated['players'][0]['selling_price']==pool[0]['now_cost']
+    assert updated['price_estimate_ids']==[pid]
+    assert p==original
+    again,changed=mod().reconcile_sale_prices(updated,pool)
+    assert changed==[] and again==updated

@@ -44,8 +44,16 @@ def refresh_official_data(raw_root, *, season, known_paths, progress=None,
     context = capture_official_context(raw_root, season=season, session=session, clock=clock)
     announce('context', context_snapshot=context)
     history = latest_history_snapshot([*known_paths, context], context, season=season)
-    coverage = (load_current_inputs(context, history, season=season)['coverage']
-                if history is not None else {})
+    try:
+        coverage = (load_current_inputs(context, history, season=season)['coverage']
+                    if history is not None else {})
+    except ValueError as exc:
+        if str(exc) != 'History source is incomplete; select a complete full-pool capture':
+            raise
+        # A run can have all HTTP responses but still contain quarantined labels.
+        # Such a history cannot be reused; fetch a new full-pool capture.
+        history = None
+        coverage = {}
     changed = sorted(set(coverage.get('newly_started_fixture_ids', []))
                      | set(coverage.get('newly_finished_fixture_ids', []))
                      | set(coverage.get('revised_result_fixture_ids', [])))
@@ -80,8 +88,12 @@ def _reference(data):
                 manifest_sha256=data['manifest_sha256'], available_at=data['as_of_at'])
 
 
-def latest_history_snapshot(paths, context_path, *, season):
-    """Find a completed full-pool capture no later than the chosen context."""
+def latest_history_snapshot(paths, context_path, *, season, include_incomplete=False):
+    """Find a full-pool anchor no later than context; refresh reuse requires complete.
+
+    The UI can include incomplete attempts so a later context does not conceal
+    missing responses or quarantine behind an older complete capture.
+    """
     context = Path(context_path).resolve()
     context_manifest = verify_snapshot(context)
     context_time = max(utc(e.get('available_at', e['retrieved_at'])) for e in context_manifest['files']
@@ -91,35 +103,46 @@ def latest_history_snapshot(paths, context_path, *, season):
     for path in paths:
         manifest = verify_snapshot(path)
         metadata = manifest.get('run_metadata', {})
+        complete=(metadata.get('overall') == 'complete'
+                  and metadata.get('successful_players') == metadata.get('player_count'))
         if (metadata.get('purpose') != 'official_full_player_history'
-                or metadata.get('overall') != 'complete' or metadata.get('season') != season
-                or metadata.get('successful_players') != metadata.get('player_count')):
+                or metadata.get('season') != season or (not include_incomplete and not complete)):
             continue
         history_times = [utc(e.get('available_at', e['retrieved_at'])) for e in manifest['files']
                          if e['source'] == 'fpl_api' and '/element_summary/' in e['relative_path']
                          and e['outcome'] == 'success']
+        if include_incomplete:
+            # An all-failed run has no successful element-summary entry. Its
+            # recorded attempts still establish when the missing data was seen.
+            history_times=[utc(e.get('available_at',e['retrieved_at'])) for e in manifest['files']
+                           if e['source']=='fpl_api' and e['outcome']=='success']
+            history_times.extend(utc(e['recorded_at']) for e in manifest.get('failures',[])
+                                 if e['source']=='fpl_api')
         if history_times and max(history_times) <= context_time:
             candidates.append((max(history_times), manifest['run_id'], Path(path)))
     return max(candidates)[2] if candidates else None
 
 
-def select_history_snapshot(paths, context_path, *, season):
-    """Use a selected capture's own rows, or a prior complete full-pool anchor."""
+def select_history_snapshot(paths, context_path, *, season, include_incomplete=False):
+    """Use own rows or an earlier full-pool anchor; incomplete reuse is opt-in."""
     chosen = Path(context_path).resolve()
     manifest = verify_snapshot(chosen)
-    if any(e['source'] == 'fpl_api' and e['outcome'] == 'success'
-           and '/element_summary/' in e['relative_path'] for e in manifest['files']):
+    if (manifest.get('run_metadata', {}).get('purpose') == 'official_full_player_history'
+            or any(e['source'] == 'fpl_api' and e['outcome'] == 'success'
+                   and '/element_summary/' in e['relative_path'] for e in manifest['files'])):
         return chosen
-    return latest_history_snapshot(paths, chosen, season=season)
+    return latest_history_snapshot(paths, chosen, season=season, include_incomplete=include_incomplete)
 
 
 def load_current_inputs(context_snapshot, history_snapshot, *, season='2026-2027',
-                        include_season_history=False):
-    """Combine current official metadata with an earlier complete history source.
+                        include_season_history=False, allow_incomplete_history=False):
+    """Combine current metadata with an earlier history source.
 
     No rows are copied into raw storage. Every reused label retains its original
     observation ID, availability time and snapshot provenance. A newly finished
     fixture is reported as an unmet history refresh, never filled as a DNP.
+    Incomplete histories are opt-in for the UI; their missing responses and
+    quarantine remain visible to readiness. Refresh reuse still requires complete.
     """
     context_path = Path(context_snapshot).resolve()
     history_path = Path(history_snapshot).resolve()
@@ -142,7 +165,8 @@ def load_current_inputs(context_snapshot, history_snapshot, *, season='2026-2027
     history = load_data(history_path, season=season, include_season_history=include_season_history)
     if utc(history['as_of_at']) > utc(context['as_of_at']):
         raise ValueError('Player history was captured after official context')
-    if history['coverage']['missing_response_players'] or history['coverage']['quarantined_rows']:
+    if (not allow_incomplete_history and
+            (history['coverage']['missing_response_players'] or history['coverage']['quarantined_rows'])):
         raise ValueError('History source is incomplete; select a complete full-pool capture')
     old_teams = {t['id']: t['name'] for t in history['teams']}
     new_teams = {t['id']: t['name'] for t in context['teams']}
@@ -169,17 +193,19 @@ def load_current_inputs(context_snapshot, history_snapshot, *, season='2026-2027
                        for i in sorted(current_players)]
     covered_ids = set(current_players) & set(old_players)
     context['histories'] = [r for r in history['histories'] if r['player_id'] in covered_ids]
-    context['quarantine'] = []
+    context['quarantine'] = list(history.get('quarantine',[]))
     if include_season_history:
         context['season_histories'] = [r for r in history['season_histories'] if r['player_id'] in covered_ids]
+    missing_ids=sorted(set(new_ids) | (set(old_coverage['missing_response_players']) & set(current_players)))
     context['coverage'] = dict(old_coverage, players=player_coverage,
         requested_element_ids=sorted(current_players),
-        missing_response_players=new_ids,
+        missing_response_players=missing_ids,
         new_player_ids_without_history=new_ids,
         changed_team_player_ids=changed_team_ids,
         newly_finished_fixture_ids=newly_finished,newly_started_fixture_ids=newly_started,
         revised_result_fixture_ids=revised_results,
-        history_refresh_required=bool(new_ids or newly_started or newly_finished or revised_results),
+        history_refresh_required=bool(missing_ids or old_coverage['quarantined_rows']
+                                      or newly_started or newly_finished or revised_results),
         history_snapshot_id=history['snapshot_id'])
     context_ref=_reference(context)
     context['input_sources'] = dict(history=_reference(history), official_context=context_ref,

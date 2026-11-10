@@ -8,18 +8,21 @@ from fpl_model.io import SnapshotWriter, verify_snapshot
 from fpl_model.quick_refresh import capture_official_context, latest_history_snapshot, select_history_snapshot, load_current_inputs
 
 
-def _snapshot(root, when, *, history, player_price=50, finished=False, started=False, player_ids=(1,)):
+def _snapshot(root, when, *, history, player_price=50, finished=False, started=False, player_ids=(1,),
+              missing_player_ids=(), history_minutes=90, team_name='One'):
     clock=lambda: datetime.fromisoformat(when.replace('Z','+00:00'))
     writer=SnapshotWriter(root,clock=clock)
     metadata=dict(purpose='official_full_player_history' if history else 'official_context_refresh',
                   season='2026-2027',overall='complete')
-    if history:metadata.update(player_count=str(len(player_ids)),successful_players=str(len(player_ids)))
+    if history:metadata.update(player_count=str(len(player_ids)),
+        successful_players=str(len(player_ids)-len(missing_player_ids)),
+        overall='partial' if missing_player_ids else 'complete')
     writer.set_run_metadata(metadata)
     bootstrap=dict(
         elements=[dict(id=i,code=100+i,web_name=f'P{i}',team=1,element_type=3,now_cost=player_price,
                        status='d' if not history else 'a',chance_of_playing_next_round=75 if not history else None)
                   for i in player_ids],
-        teams=[dict(id=1,name='One'),dict(id=2,name='Two')],
+        teams=[dict(id=1,name=team_name),dict(id=2,name='Two')],
         events=[dict(id=1,deadline_time='2026-10-01T10:00:00Z',finished=True,data_checked=True),
                 dict(id=2,deadline_time='2026-10-20T10:00:00Z',finished=finished,data_checked=finished),
                 dict(id=3,deadline_time='2026-11-01T10:00:00Z',finished=False,data_checked=False)],
@@ -35,8 +38,13 @@ def _snapshot(root, when, *, history, player_price=50, finished=False, started=F
                          request_url='https://fantasy.premierleague.com/api/'+name)
     if history:
         for i in player_ids:
+            if i in missing_player_ids:
+                writer.record_failure(source='fpl_api',required=False,outcome='request_failed',
+                    request_url=f'https://fantasy.premierleague.com/api/element-summary/{i}/',
+                    request_context={'element_id':str(i)})
+                continue
             payload=dict(history=[dict(element=i,fixture=11,round=1,opponent_team=2,was_home=True,
-                          kickoff_time='2026-10-01T15:00:00Z',minutes=90,starts=1,total_points=6)])
+                          kickoff_time='2026-10-01T15:00:00Z',minutes=history_minutes,starts=1,total_points=6)])
             writer.write_raw(f'fpl_api/element_summary/{i}.json',json.dumps(payload).encode(),
                              source='fpl_api',required=False,request_started_at=clock(),retrieved_at=clock(),
                              http_status=200,request_url=f'https://fantasy.premierleague.com/api/element-summary/{i}/',
@@ -121,6 +129,21 @@ def test_smart_refresh_skips_player_requests_when_history_is_current(tmp_path,mo
     assert result['status']=='context_only' and result['selected_snapshot']==fresh
     assert result['history_snapshot']==prior and result['history_required'] is False
     assert verify_snapshot(prior)['run_metadata']['overall']=='complete'
+
+
+def test_smart_refresh_recaptures_incomplete_history_instead_of_stopping(tmp_path,monkeypatch):
+    from fpl_model import quick_refresh
+    prior=_snapshot(tmp_path/'raw','2026-10-10T10:00:00Z',history=True)
+    fresh=_snapshot(tmp_path/'raw','2026-10-14T10:00:00Z',history=False)
+    complete=_snapshot(tmp_path/'raw','2026-10-14T11:00:00Z',history=True)
+    monkeypatch.setattr(quick_refresh,'capture_official_context',lambda *a,**k:fresh)
+    monkeypatch.setattr(quick_refresh,'load_current_inputs',lambda *a,**k:(_ for _ in ()).throw(
+        ValueError('History source is incomplete; select a complete full-pool capture')))
+    monkeypatch.setattr('fpl_model.full_player_capture.capture_all_players',lambda *a,**k:complete)
+    result=quick_refresh.refresh_official_data(tmp_path/'raw',season='2026-2027',known_paths=[prior])
+    assert result['status']=='history_complete'
+    assert result['selected_snapshot']==complete
+    assert result['history_snapshot'] is None
 
 
 def test_smart_refresh_fetches_history_after_changed_fixture_and_keeps_context(tmp_path,monkeypatch):

@@ -4,6 +4,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,7 +18,17 @@ from fpl_model.optimizer.squad import evaluate_squad
 from fpl_model.optimizer.transfers import optimize_transfers, NoTransferSolution
 from fpl_model.simulation import simulate
 
-VERSION = 'immediate_transfers_autosubs_v2'
+VERSION = 'immediate_transfers_autosubs_v3'
+
+
+def paired_gain_diagnostics(proposal, hold):
+    """Fixed-plan difference on shared evaluation draws, not sampling uncertainty."""
+    diff=np.asarray(proposal,dtype=float)-np.asarray(hold,dtype=float)
+    if diff.ndim!=1 or not len(diff) or diff.shape!=np.shape(hold) or not np.isfinite(diff).all():
+        raise ValueError('Paired evaluation requires equal nonempty scenario vectors')
+    return dict(gain_mean=float(diff.mean()),gain_p10=float(np.quantile(diff,.1)),
+                gain_p50=float(np.quantile(diff,.5)),gain_p90=float(np.quantile(diff,.9)),
+                p_beat_hold=float(np.mean(diff>0)),p_tie_hold=float(np.mean(diff==0)))
 
 
 def _json(value):
@@ -48,6 +59,17 @@ def _read_bundle(path):
     if 'assist_models' in bundle:bundle['assist_models']={int(e):v for e,v in bundle['assist_models'].items()}
     if 'bonus_models' in bundle:bundle['bonus_models']={int(e):v for e,v in bundle['bonus_models'].items()}
     return bundle
+
+
+def load_cached_bundle(cache_root, cache_key):
+    """Read an existing immutable forecast cache; never calculate a replacement."""
+    if not isinstance(cache_key,str) or re.fullmatch(r'[0-9a-f]{64}',cache_key) is None:
+        raise ValueError('Invalid forecast cache key')
+    path=_safe_root(cache_root)/cache_key
+    result=_read_bundle(path)
+    if result.get('metadata',{}).get('cache_key')!=cache_key:
+        raise ValueError('Forecast cache identity mismatch')
+    return result
 
 
 def forecast_bundle(data, events, config, *, origin_at, cache_root, draws=3000, seed=42,
@@ -258,14 +280,18 @@ def compare_packages(bundle, profile, *, max_transfers=1, locked=(), excluded=()
             proposal['per_gw'].append(dict(event=event, mean=float(values.mean()),
                 p10=float(np.quantile(values,.1)), p90=float(np.quantile(values,.9)),
                 bench_mean=float(evaluated['bench_points'].mean()),hits=hits,
+                player_mean_points=evaluated['player_mean_points'],
                 objective=proposal['lineups'][event]['objective']-hits))
         if count==0:
             hold_values = values_by_gw
         for index,row in enumerate(proposal['per_gw']):
             row['gain'] = float((values_by_gw[index]-hold_values[index]).mean())
+            row.update(paired_gain_diagnostics(values_by_gw[index],hold_values[index]))
         proposal['total_points'] = sum(row['mean'] for row in proposal['per_gw'])
         proposal['total_gain'] = sum(row['gain'] for row in proposal['per_gw'])
         proposal['next_gw_gain'] = proposal['per_gw'][0]['gain']
+        proposal['paired_horizon']=paired_gain_diagnostics(
+            np.sum(values_by_gw,axis=0),np.sum(hold_values,axis=0))
         proposal['objective_gain'] = proposal['objective']-(proposals[0]['objective'] if proposals else proposal['objective'])
         proposals.append(proposal)
     return dict(version=VERSION,created_at=datetime.now(timezone.utc).isoformat(),

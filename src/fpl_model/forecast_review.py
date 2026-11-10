@@ -131,6 +131,10 @@ def _evaluate_summary(report,variant,observations,season):
 
 def review_forecast(path,observations,output_root,*,season='2026-2027',context=None,outcome_source=None):
     path=Path(path).resolve();now=datetime.now(timezone.utc).isoformat()
+    if path.name=='report.json':
+        from fpl_model.daily_forecast_review import review_daily_forecast
+        return review_daily_forecast(path,observations,output_root,season=season,
+                                     context=context,outcome_source=outcome_source)
     if path.is_dir() or path.name=='forecast.json':
         root=path if path.is_dir() else path.parent;report,arrays=load_forecasts(root)
         if report['season']!=season:raise ValueError('Outcome season differs from forecast season')
@@ -161,12 +165,21 @@ def reviewable_forecasts(root):
     """Exclude synthetic examples; do not rank runs by performance."""
     paths=list((Path(root)/'artifacts/defensive_odds').glob('*/comparison.json'))
     paths+=list((Path(root)/'artifacts/model_forecasts').glob('*/forecast.json'))
+    paths+=list((Path(root)/'artifacts/transfers').glob('*/report.json'))
     result=[]
     for p in sorted(paths,reverse=True):
         if p.parent.name.startswith('.'):continue
         try:r=json.loads(p.read_bytes())
         except (OSError,ValueError):continue
-        if r.get('kind')=='current_forecast_comparison' or r.get('version')=='saved_predictions_v1':
+        if r.get('scope') in ('transfer_sequences','transfers_now_then_hold') and p.name=='report.json':
+            forecast=r.get('forecast') or {}
+            deadlines=forecast.get('deadlines') or {}
+            events=sorted(int(e) for e in r.get('players_by_event',{}))
+            if not events or any(str(e) not in deadlines for e in events):continue
+            result.append(dict(path=p,event=events[0],origin=forecast['forecast_origin_at'],
+                               deadline_at=deadlines[str(events[0])],
+                               created_at=r.get('created_at'),format='daily_transfer'))
+        elif r.get('kind')=='current_forecast_comparison' or r.get('version')=='saved_predictions_v1':
             result.append(dict(path=p,event=r['event'],origin=r['forecast_origin_at'],deadline_at=r['deadline_at'],
                                format='saved_scenarios' if p.name=='forecast.json' else 'legacy_summary'))
     return sorted(result,key=lambda r:(r['event'],r['origin'],str(r['path'])))

@@ -37,6 +37,7 @@ def test_bundle_cache_and_shared_scenarios(tmp_path,monkeypatch):
     assert np.array_equal(cached['scenarios'][5]['points'],b['scenarios'][5]['points'])
     p=profile();before=copy.deepcopy(p)
     report=m.compare_packages(cached,p,max_transfers=1,locked=[1])
+    assert report['version']=='immediate_transfers_autosubs_v3'
     assert p==before
     hold=report['packages'][0]
     assert hold['count']==0 and hold['total_gain']==0 and hold['next_gw_gain']==0
@@ -49,6 +50,28 @@ def test_bundle_cache_and_shared_scenarios(tmp_path,monkeypatch):
     saved=json.loads((path/'report.json').read_text())
     assert saved['forecast']['cache_key']==b['cache_key']
     assert saved['profile']==p
+
+
+def test_paired_gain_diagnostics_use_same_evaluation_draws_and_preserve_hold(tmp_path):
+    m=mod()
+    diagnostics=m.paired_gain_diagnostics(np.array([5.,10.,1.]),np.array([3.,10.,2.]))
+    assert diagnostics['gain_mean']==pytest.approx(1/3)
+    assert diagnostics['gain_p10']==pytest.approx(-.8)
+    assert diagnostics['gain_p50']==0
+    assert diagnostics['gain_p90']==pytest.approx(1.6)
+    assert diagnostics['p_beat_hold']==pytest.approx(1/3)
+    assert diagnostics['p_tie_hold']==pytest.approx(1/3)
+
+    report=m.compare_packages(bundle(tmp_path),profile(),max_transfers=1)
+    hold=report['packages'][0]
+    assert hold['paired_horizon']['gain_mean']==0
+    for proposal in report['packages']:
+        assert proposal['paired_horizon']['gain_mean']==pytest.approx(proposal['total_gain'])
+        assert 0<=proposal['paired_horizon']['p_beat_hold']<=1
+        for row in proposal['per_gw']:
+            assert row['gain_mean']==pytest.approx(row['gain'])
+            assert sum(v['total'] for v in row['player_mean_points'].values())==pytest.approx(
+                row['mean']+row['hits'])
 
 
 def test_future_cutoff_seed_and_cache_invalidation(tmp_path):

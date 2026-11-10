@@ -3,9 +3,67 @@ import json
 import pandas as pd
 import streamlit as st
 from fpl_model.chips import LABELS
-from fpl_model.ui.presentation import (friendly_time, show_lineup_pitch,
+from fpl_model.ui.presentation import (friendly_time, show_lineup,
                                         summary_metrics, week_plan_html)
-from fpl_model.ui.decision_summary import sequence_decision
+from fpl_model.ui.decision_summary import sequence_decision, decision_evidence
+
+
+def show_decision_evidence(report, plan):
+    """Explain a fixed transfer plan using its stored evaluation draws."""
+    st.subheader('Hvorfor dette forslag?')
+    st.caption('Samme evalueringsscenarier for forslaget og behold-holdet. '
+               'Gevinsten omfatter opstilling, bænkregler, anfører/vice og pointfradrag.')
+    paired=plan.get('paired_horizon')
+    is_hold=plan.get('plan_id')=='hold' or plan.get('count')==0 and not plan.get('steps')
+    if paired and is_hold:
+        st.write('Behold-holdet er reference: forskellen er 0 point i alle scenarier.')
+    elif paired:
+        st.write(f"I {paired['p_beat_hold']:.0%} af modellens scenarier slår forslaget behold-holdet "
+                 f"over horisonten; simuleret forskel P10–P90: "
+                 f"{paired['gain_p10']:+.1f} til {paired['gain_p90']:+.1f} point.")
+        st.caption('Andelen er betinget af modellen og de valgte input; den er ikke en kalibreret chance '
+                   'for at slå en anden FPL-manager. Små gevinster kan være simulationsstøj.')
+    else:
+        st.caption('Ældre rapport uden gemte parrede scenarieforskelle: spredning og andel vindende scenarier vises ikke.')
+    st.caption(f"Planlægningsmålværdi {plan['objective']:.2f} point · simulerede nettopoint "
+               f"{plan['total_points']:.2f}. Solver-gap gælder kun kandidatsøgningen, "
+               'ikke et globalt optimum inklusive autosubs og transfersekvenser.')
+    evidence=decision_evidence(report,plan)
+    if evidence['available']:
+        positives=[row for row in evidence['drivers'] if row['change']>0][:2]
+        negatives=[row for row in reversed(evidence['drivers']) if row['change']<0][:2]
+        drivers=positives+negatives
+        if drivers:
+            st.dataframe(pd.DataFrame([dict(Spiller=row['name'],Årsag=row['kind'],
+                **{'Ændret holdbidrag':round(row['change'],2)}) for row in drivers]),hide_index=True)
+            st.caption('Holdbidrag er simulerede point i den faste XI/bænkerækkefølge, inkl. autosub/Bench Boost og '
+                       'anfører/vice. Tallene er en afstemning mellem to hele planer, ikke isolerede '
+                       'én-til-én-effekter af hver transfer.')
+        breakdown=evidence['horizon']
+        st.caption(f"Afstemt ændring over horisonten: XI {breakdown['xi_delta']:+.2f} · "
+                   f"bænk (autosubs/Bench Boost) {breakdown['bench_delta']:+.2f} · "
+                   f"anfører/vice {breakdown['captain_delta']:+.2f} · "
+                   f"ekstra hits −{breakdown['hits_delta']:.0f} = {breakdown['gain']:+.2f} point mod behold.")
+    else:
+        st.caption('Ældre rapport uden spillerbidrag: årsager på holdniveau kan ikke afstemmes uden nye scenarier.')
+    if paired:
+        hold=next((p for p in report['packages'] if p.get('plan_id')=='hold' or
+                   p.get('count')==0 and not p.get('steps')),None)
+        baseline={int(row['event']):row for row in hold['per_gw']} if hold else {}
+        st.dataframe(pd.DataFrame([dict(GW=row['event'],**{
+            'Behold, nettopoint':round(baseline[int(row['event'])]['mean'],2),
+            'Forslag, nettopoint':round(row['mean'],2),
+            'Ændring':round(row['gain'],2),
+            'P10 ændring':round(row['gain_p10'],2),
+            'P90 ændring':round(row['gain_p90'],2),
+            'Andel bedre':round(row['p_beat_hold'],3)}) for row in plan['per_gw']]),hide_index=True)
+    sensitivity=report.get('sensitivity')
+    if sensitivity:
+        fixed=next((p for p in sensitivity['fixed_plans'] if p['plan_id']==plan.get('plan_id')),None)
+        if fixed:
+            st.caption(f"Hvad kan ændre valget? I det gemte hypotetiske returscenarie ændres "
+                       f"denne faste plans gevinst mod behold med {fixed['change_in_gain']:+.2f} point. "
+                       'Nyheder og fremtidige priser er stadig ukendte.')
 
 
 def availability_controls(data,owned,events,labels,*,allow_sensitivity=True):
@@ -58,23 +116,24 @@ def scenario_records(records,sensitivity,events,origin,which):
     return out
 
 
-def show_sequence_report(report):
+def show_sequence_report(report, *, compact=False, media_by_id=None):
     f=report['forecast'];pool={p['player_id']:p for p in next(iter(report['players_by_event'].values()))}
     names=lambda ids:', '.join(pool[i]['name'] for i in ids) or '—'
-    st.subheader('Strategi uge for uge')
+    st.subheader('Ugeplan og opstillinger' if compact else 'Strategi uge for uge')
     st.caption(f"Beregnet {friendly_time(f['forecast_origin_at'])} · transfers kan også ske i senere GWs")
     if f.get('availability_policy')=='short_doubt_next_gw':
         st.warning('Denne rapport antager, at 75%-tvivl ophører efter første GW. Det er et planlægningsscenarie, ikke en verificeret raskmelding.')
     if report.get('scenario_label'):st.warning('Hypotetisk hovedscenarie: '+report['scenario_label'])
     decision=sequence_decision(report)
-    st.write(f"**Forslag før GW{decision['event']}**")
-    st.success('Behold holdet denne uge og vurder næste deadline igen.' if decision['count']==0 else
-               f"{decision['count']} transfer(s) nu: {names(decision['out'])} ud · {names(decision['in'])} ind.")
-    summary_metrics([
-        ('Næste GW',f"{decision['next_gw_gain']:+.2f}",'Simuleret gevinst mod behold'),
-        ('Hele horisonten',f"{decision['horizon_gain']:+.2f}",'Simuleret gevinst mod behold'),
-        ('Bank efter denne uge',f"£{decision['bank_after']/10:.1f}m",f"{decision['hits']} pointfradrag i planen")])
-    st.caption('Point er simulerede; små forskelle kan være støj. Genberegn efter nye nyheder.')
+    if not compact:
+        st.write(f"**Forslag før GW{decision['event']}**")
+        st.success('Behold holdet denne uge og vurder næste deadline igen.' if decision['count']==0 else
+                   f"{decision['count']} transfer(s) nu: {names(decision['out'])} ud · {names(decision['in'])} ind.")
+        summary_metrics([
+            ('Næste GW',f"{decision['next_gw_gain']:+.2f}",'Simuleret gevinst mod behold'),
+            ('Hele horisonten',f"{decision['horizon_gain']:+.2f}",'Simuleret gevinst mod behold'),
+            ('Bank efter denne uge',f"£{decision['bank_after']/10:.1f}m",f"{decision['hits']} pointfradrag i planen")])
+        st.caption('Point er simulerede; små forskelle kan være støj. Genberegn efter nye nyheder.')
     refined=bool(report['packages'][0].get('lineup_policy'))
     rows=[]
     for p in report['packages']:
@@ -96,6 +155,7 @@ def show_sequence_report(report):
         st.session_state['sequence_detail']=next((i for i,p in enumerate(report['packages']) if p is best),0)
     ix=st.selectbox('Strategi – se ugeplan',range(len(rows)),format_func=lambda i:rows[i]['Strategi'],key='sequence_detail')
     plan=report['packages'][ix]
+    show_decision_evidence(report,plan)
     summary_metrics([
         ('Simulerede point',f"{plan['total_points']:.2f}",'Hele horisonten · netto'),
         ('Gevinst mod behold',f"{plan['total_gain']:+.2f}",'Samme prognoser · netto'),
@@ -107,13 +167,15 @@ def show_sequence_report(report):
     for step in plan['steps']:
         if step.get('chip')=='free_hit':
             st.info(f"Free Hit GW{step['event']}: dette hold er midlertidigt. Permanent trup efter runden: {names(step['permanent_squad_after'])}. Bank: £{step['permanent_bank_after']/10:.1f}m.")
-    _show_lineups(report,plan)
+    _show_lineups(report,plan,media_by_id=media_by_id)
     with st.expander('Alle tal for ugeplan og point'):
         st.dataframe(pd.DataFrame([dict(GW=s['event'],Ud=names(s['out']),Ind=names(s['in']),**{
             'Chip':LABELS.get(s.get('chip'),'Ingen'),'Transfers':s['count'],'Almindelige':s.get('ordinary_count',s['count']),'Omlægning':s.get('relocation_count',0),'Bank £m':s['bank_after']/10,'Permanent bank £m':s.get('permanent_bank_after',s['bank_after'])/10,'Salg £m':s['sale_proceeds']/10,
             'Køb £m':s['purchase_cost']/10,'FT før':s['available'],'Gratis brugt':s['used'],
             'FT tilbage':s['remaining'],'FT næste GW':s['next_gw'],'Hits':s['hits'],'Heraf eksisterende hits':s.get('existing_hits',0)}) for s in plan['steps']]),hide_index=True)
-        display_rows=[dict(r,chip=LABELS.get(r.get('chip'),'Ingen'),bench_contribution_kind='Bench Boost' if r.get('chip')=='bench_boost' else 'Autosubs') for r in plan['per_gw']]
+        display_rows=[{k:v for k,v in r.items() if k!='player_mean_points'} |
+            dict(chip=LABELS.get(r.get('chip'),'Ingen'),bench_contribution_kind='Bench Boost' if r.get('chip')=='bench_boost' else 'Autosubs')
+            for r in plan['per_gw']]
         st.dataframe(pd.DataFrame(display_rows).round(2).rename(columns={'chip':'Chip','bench_contribution_kind':'Bænkregel','hits':'Pointfradrag','event':'GW','mean':'Simulerede point, netto',
             'gain':'Gevinst mod behold','objective':'Målværdi, netto','bench_mean':'Bænkbidrag (autosubs / BB)',
             'previous_lineup_mean':'Tidligere opstillingsmetode','lineup_gain':'Gevinst fra nyt opstillingsvalg'}),hide_index=True)
@@ -147,7 +209,7 @@ def show_sequence_report(report):
             st.write(f"Simulerede nettopoint: {p['total_points']:.2f} · gevinst mod B-behold: {p['total_gain']:.2f} · solver {p['solver']['status']} · gap {100*p['solver']['gap']:.3f}%")
             st.dataframe(pd.DataFrame([dict(GW=x['event'],Ud=names(x['out']),Ind=names(x['in']),
                 Bank=x['bank_after']/10,Hits=x['hits'],Anfører=names([p['lineups'].get(x['event'],p['lineups'].get(str(x['event'])))['captain']])) for x in p['steps']]),hide_index=True)
-            _show_lineups(alternative,p,prefix='Scenarie B · ')
+            _show_lineups(alternative,p,prefix='Scenarie B · ',media_by_id=media_by_id)
     with st.expander('Datagrundlag, odds og antagelser'):
         st.write(f"Beregnet: {f['forecast_origin_at']} · officielle data: {f['source_available_at']}")
         st.write(f"Dataversion: {f['snapshot_id']} · model: {f['model_version']}")
@@ -181,7 +243,8 @@ def show_sequence_report(report):
     st.download_button('Download strategi (JSON)',json.dumps(report,ensure_ascii=False,indent=2),file_name='transferstrategi.json',mime='application/json')
 
 
-def _show_lineups(report,plan,prefix=""):
+def _show_lineups(report,plan,prefix="",media_by_id=None):
+    view=st.radio('Opstillingsvisning',['Liste','Bane'],horizontal=True,key='sequence_lineup_view_'+prefix)
     tabs=st.tabs([f'{prefix}GW{e}' for e in plan['lineups']])
     for tab,(event,lineup) in zip(tabs,plan['lineups'].items()):
         lookup={r['player_id']:r for r in (report['players_by_event'].get(event) or report['players_by_event'][str(event)])}
@@ -192,7 +255,9 @@ def _show_lineups(report,plan,prefix=""):
                 st.caption(f"Forventede {contribution} i planlægningsscenarier: {lineup['planning_bench_points']:.2f}. "
                            f"Holdpoint inkl. anfører/vice: {lineup['objective']:.2f}; tidligere XI på samme scenarier: {lineup['previous_planning_points']:.2f}. "
                            'Opstillingen fastlægges før kampene — ingen valg med kendskab til udfaldet.')
-            show_lineup_pitch(lookup,lineup)
+            show_lineup(lookup,lineup,view=view,media_by_id=media_by_id)
+            week=next(row for row in plan['per_gw'] if int(row['event'])==int(event))
+            team_contribution={int(i):v for i,v in week.get('player_mean_points',{}).items()}
             table=[]
             for pid in lineup['starters']+lineup['bench']:
                 r=lookup[pid]
@@ -200,5 +265,10 @@ def _show_lineups(report,plan,prefix=""):
                 if pid==lineup['captain']:role+=' · anfører'
                 elif pid==lineup['vice_captain']:role+=' · vice'
                 table.append(dict(Spiller=r['name'],Rolle=role,**{'Pris £m':r['price']/10,'xP':round(r['xp'],3),
-                    'Forv. minutter':round(r['expected_minutes'],1),'Kampe':len(r['fixture_ids']),'Fallback':r['fallbacks']}))
+                    'Forv. minutter':round(r['expected_minutes'],1),
+                    'DNP %':round(100*r['p_no_play'],1) if r.get('fixture_ids') else None,
+                    'Holdbidrag':round(team_contribution[pid]['total'],2) if pid in team_contribution else None,
+                    'Kampe':len(r['fixture_ids']),'Fallback':r['fallbacks']}))
             st.dataframe(pd.DataFrame(table),hide_index=True)
+            st.caption('Holdbidrag er fra uafhængige evalueringsscenarier med fast XI, autosubs og vice. '
+                       'xP er spillerens egne point før holdrolle. Et DNP kan udløse autosub, et kort indhop kan blokere den.')

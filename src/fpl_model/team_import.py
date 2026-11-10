@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import requests
 from fpl_model.io import SnapshotWriter
 from fpl_model.label_contracts import utc
+from fpl_model.my_team import reconcile_sale_prices
 from fpl_model.optimizer.squad import COUNTS
 
 BASE='https://fantasy.premierleague.com/api/'
@@ -106,13 +107,29 @@ def make_draft(imported,data,*,previous=None,keep_existing=False):
         if old is None or p.get('code') is None or any(old.get(k)!=p.get(k) for k in ('code','team','element_type')):
             raise ValueError('Spilleridentitet eller klub matcher ikke prognosedata. Opdatér det officielle datagrundlag først.')
     provenance={k:imported[k] for k in ('entry_id','event','observed_at','deadline_at','snapshot_id','snapshot_path')}
+    provenance['bank_at_deadline']=imported['bank_at_deadline']
+    # The public picks contain player IDs, but not the owner's acquisition or
+    # selling prices. Use list prices solely as marked planning estimates.
+    prices=[]
+    for p in imported['players']:
+        values=(p.get('now_cost'),pool[p['id']].get('now_cost'))
+        if any(type(v) is not int or v<=0 for v in values):
+            raise ValueError('FPL mangler en gyldig aktuel pris for en af spillerne.')
+        prices.append(min(values))
     if keep_existing:
         if not previous or previous.get('season')!=data['season'] or {p['player_id'] for p in previous['players']}!={p['id'] for p in imported['players']}:
             raise ValueError('Lokal økonomi kan kun genbruges for præcis samme trup og sæson.')
-        draft=deepcopy(previous);provenance['economy_source']='explicitly_reused_local_values'
+        draft=deepcopy(previous)
+        draft,adjusted=reconcile_sale_prices(draft,[dict(id=p['id'],now_cost=price)
+                                                     for p,price in zip(imported['players'],prices)])
+        provenance['economy_source']='previous_local_values_with_marked_price_adjustments'
+        provenance['adjusted_selling_price_ids']=adjusted
     else:
-        draft=dict(schema_version=1,season=data['season'],players=[dict(player_id=p['id'],selling_price=None) for p in imported['players']],
-                   bank=imported['bank_at_deadline'],free_transfers=None,transfers_made=None)
-        provenance['economy_source']='bank_at_deadline_other_values_unknown'
+        draft=dict(schema_version=1,season=data['season'],
+                   players=[dict(player_id=p['id'],selling_price=price)
+                            for p,price in zip(imported['players'],prices)],
+                   price_estimate_ids=sorted(p['id'] for p in imported['players']),
+                   bank=None,free_transfers=None,transfers_made=None)
+        provenance['economy_source']='public_list_price_estimates_not_actual_selling_prices'
     draft['import_provenance']=provenance
     return draft

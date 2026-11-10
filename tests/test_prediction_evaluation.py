@@ -30,6 +30,20 @@ def test_only_final_outcomes_and_preserved_forecast():
     assert r['interval_80']['n']==1 and r['by_position'][0]['n']==1
 
 
+def test_interval_coverage_uses_only_rows_with_both_quantiles():
+    m=module()
+    rows=[dict(actual=5,predicted=5,actual_minutes=90,predicted_minutes=80,
+               p_no_play=.1,actual_dnp=0,p10=0,p90=10,crps=None),
+          dict(actual=12,predicted=10,actual_minutes=0,predicted_minutes=20,
+               p_no_play=.2,actual_dnp=1,p10=None,p90=None,crps=None)]
+    metrics=m._metrics(rows)
+    assert metrics['n']==2 and metrics['points']['mae']==1
+    assert metrics['minutes']['bias']==5 and metrics['dnp']['brier']==pytest.approx(.325)
+    assert metrics['interval_80']==dict(n=1,coverage=1.)
+    assert m._metrics([rows[1]])['interval_80']==dict(n=0,coverage=None)
+    assert m._metrics([rows[0],dict(rows[0],p10=None)])['interval_80']==dict(n=1,coverage=1.)
+
+
 def test_missing_dnp_conflicts_and_postponement_are_not_silently_scored():
     m=module();p=prediction();x=np.ones((100,1));mins=x*90
     assert m.evaluate_predictions(p,x,mins,[],model_version='test')['n']==0
