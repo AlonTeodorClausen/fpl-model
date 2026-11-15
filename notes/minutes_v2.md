@@ -47,3 +47,16 @@ Detaljer:
 Prospektivt på GW12–15 mod `component_baseline_v1` efter protokollens kriterier: lavere point-CRPS samlet og lavere minut-MAE for `regular`, uden at nogen blokeringsgrænse overskrides. En retrospektiv kørsel på GW3–10 må kun bruges som kontrol af, at modellen virker teknisk. Den er ikke evidens og må ikke føre til ændringer i tabellen ovenfor.
 
 Prognoser med v2 skal gemmes før hver deadline, ligesom med standardmodellen, og med samme seed og antal scenarier.
+
+## Ændringer
+
+**15. november 2026, før nogen prospektiv runde: én designrettelse efter den tekniske kontrol.**
+
+Den tekniske kontrol på GW3–10 viste, at den første udgave gav faste spillere omkring 11 minutter for lidt (minut-MAE 26,2 mod 20,8 for v1). Årsagen var en designfejl, ikke en kodefejl. Positionens startandel blev beregnet over hele truppen, også reserver, der næsten aldrig spiller. Udgangspunktet blev derfor kun 28–44 %. Med få kampe og vægte under 1 trak modellen faste spillere langt ned mod det tal. En angriber med 2 starter i 2 kampe fik 63 % startchance; v1 giver 82 %. Indhopchancen for ikke-startende midtbanespillere blev også for høj (30 %), fordi den ikke tog højde for spillerens egen sæson.
+
+Rettelsen har to niveauer i stedet for ét:
+
+1. **Sæsonniveau.** Spillerens egne tal for hele sæsonen, uden vægte. Startchancen trækkes mod v1's faste prior (45 %, styrke 1 kamp), præcis som i v1. De øvrige trin (indhop når spilleren ikke starter, hel kamp, udskiftningsminutter, indhopminutter) trækkes mod positionens tal med styrke 1.
+2. **Formniveau.** De vægtede seneste kampe (halveringstid 5) trækkes mod spillerens sæsonniveau med styrke 2.
+
+Alt andet er uændret: tre trin, halveringstid 5, hel kamp trukket for sig, spredning 12, fravær og faktor 0,7. Kandidaten fryses efter denne ene rettelse, uanset hvad den næste tekniske kontrol viser, medmindre den afslører en egentlig programmeringsfejl. Resultatet af kontrollen noteres herunder, men er stadig ikke evidens.
