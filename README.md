@@ -106,6 +106,8 @@ Både appens kørselsknap og CLI gemmer `report.json`, `players.csv` og `evaluat
 
 Dette er **retrospektivt, ikke strikt prospektivt**: historiske labels er hentet senere og kan være revideret; positioner og kampplan er fra aktuelle versioner. Holdtilknytning udledes af tidligere observerede kampe; flyttede/ufuldstændige kampmængder udelades. Den aktuelle spillerpulje og det konservative dækningskrav giver udvælgelsesbias; kun tre test-GWs giver stadig et kort grundlag. Historiske snapshots og en længere urørt testperiode mangler for stærkere konklusioner.
 
+Fra GW11 vurderes prognoser og nye modelvarianter efter en på forhånd fastlagt protokol: primære mål, blokeringskriterier, mindst fire prospektive runder og en løbende logbog. Se [præregistreret evalueringsprotokol](notes/evaluation_protocol.md).
+
 Freeze/readiness bevares som separat kvalitetsspor og blokerer ikke prototypen. Se `notes/prospective_freeze.md` og `notes/label_contracts.md`.
 
 ## Implementeret og senere arbejde
