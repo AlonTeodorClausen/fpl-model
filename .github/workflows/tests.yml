@@ -1,0 +1,19 @@
+name: Offline tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.lock
+      - name: Run offline test suite
+        # Live tests that contact public data sources are excluded by pyproject's addopts.
+        run: python -m pytest -q
