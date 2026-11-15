@@ -292,6 +292,20 @@ def test_default_daily_reference_is_last_saved_before_deadline_not_best_after_re
     assert preferred_review_index(choices,context,datetime(2026,9,21,tzinfo=timezone.utc))==0
 
 
+
+def test_default_daily_reference_is_per_model_so_a_later_v2_run_does_not_replace_standard():
+    from datetime import datetime,timezone
+    from fpl_model.forecast_review import model_family
+    from fpl_model.ui.forecast_review import preferred_review_index
+    assert model_family('component_baseline_v1__short_doubt_scenario_v1')=='component_baseline_v1'
+    context=dict(events=[dict(id=4,finished=True,data_checked=True)],
+                 fixtures=[dict(id=11,event=4,finished=True)])
+    choices=[dict(event=4,format='daily_transfer',origin=origin,model=model,
+                  deadline_at='2026-09-11T10:00:00Z',created_at=created)
+             for origin,created,model in [('2026-09-10T12:00:00Z','2026-09-10T12:01:00Z','component_baseline_v1'),
+                                          ('2026-09-10T13:00:00Z','2026-09-10T13:01:00Z','component_minutes_v2')]]
+    assert preferred_review_index(choices,context,datetime(2026,9,21,tzinfo=timezone.utc))==0
+
 def test_single_snapshot_reference_is_verified_without_rewriting_old_report(tmp_path):
     from fpl_model.forecast_review import review_forecast
     report=daily_report();ref=history_snapshot(tmp_path)

@@ -11,4 +11,5 @@ def show_experiment_overview():
                'rapporter og noter ligger i git-historikken, og gemte forslag, der brugte dem, kan stadig åbnes.')
     frame = pd.DataFrame([dict(Forsøg=r['name'], Status=r['status'], Ændrer=r['changes'],
                                Resultat=r['result']) for r in overview_rows()])
-    st.dataframe(frame, hide_index=True, use_container_width=True)
+    # st.table wraps long text; a dataframe would cut off the result column.
+    st.table(frame.set_index('Forsøg'))

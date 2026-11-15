@@ -161,6 +161,14 @@ def review_forecast(path,observations,output_root,*,season='2026-2027',context=N
     return save_report(result,output_root),result
 
 
+STANDARD_MODEL='component_baseline_v1'
+
+
+def model_family(version):
+    """Scenario suffixes (e.g. __short_doubt_scenario_v1) do not change the model."""
+    return version.split('__')[0] if isinstance(version,str) and version else None
+
+
 def reviewable_forecasts(root):
     """Exclude synthetic examples; do not rank runs by performance."""
     paths=list((Path(root)/'artifacts/defensive_odds').glob('*/comparison.json'))
@@ -178,7 +186,8 @@ def reviewable_forecasts(root):
             if not events or any(str(e) not in deadlines for e in events):continue
             result.append(dict(path=p,event=events[0],origin=forecast['forecast_origin_at'],
                                deadline_at=deadlines[str(events[0])],
-                               created_at=r.get('created_at'),format='daily_transfer'))
+                               created_at=r.get('created_at'),format='daily_transfer',
+                               model=model_family(forecast.get('model_version'))))
         elif r.get('kind')=='current_forecast_comparison' or r.get('version')=='saved_predictions_v1':
             result.append(dict(path=p,event=r['event'],origin=r['forecast_origin_at'],deadline_at=r['deadline_at'],
                                format='saved_scenarios' if p.name=='forecast.json' else 'legacy_summary'))

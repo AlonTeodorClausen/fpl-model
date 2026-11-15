@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from fpl_model.forecast_review import (
-    event_readiness, read_official_context, review_forecast, reviewable_forecasts,
+    STANDARD_MODEL, event_readiness, read_official_context, review_forecast, reviewable_forecasts,
 )
 from fpl_model.label_contracts import utc
 from fpl_model.io import SnapshotIntegrityError
@@ -26,6 +26,12 @@ def metric_rows(variants,group=None):
     return rows
 
 
+def _model_label(choice):
+    model=choice.get('model')
+    if model in (None,STANDARD_MODEL):return ''
+    return ' · minutmodel v2' if model=='component_minutes_v2' else f' · {model}'
+
+
 def preferred_review_index(choices,context,now):
     """Show the latest officially completed GW before an unfinished one."""
     def recorded_before_cutoff(choice):
@@ -35,6 +41,10 @@ def preferred_review_index(choices,context,now):
     eligible=[]
     for i,choice in enumerate(choices):
         if utc(choice['deadline_at'])>utc(now) or not recorded_before_cutoff(choice):
+            continue
+        # The protocol's "last run before deadline" is per model: a later
+        # experimental run never replaces the standard model's run by default.
+        if choice.get('format')=='daily_transfer' and choice.get('model') not in (None,STANDARD_MODEL):
             continue
         if context is not None and event_readiness(context,choice['event'])['status']=='context_final_labels_still_required':
             eligible.append(i)
@@ -167,7 +177,7 @@ def show_forecast_review(root,data):
         index=preferred_review_index(choices,context,now)
         chosen=st.selectbox('Prognose til efterkontrol',choices,index=index,
             format_func=lambda c:f"GW{c['event']} · {friendly_time(c.get('created_at') or c['origin'])} · " +
-                ('dagligt transferforslag' if c['format']=='daily_transfer' else
+                ('dagligt transferforslag' + _model_label(c) if c['format']=='daily_transfer' else
                  'gemte simulationer' if c['format']=='saved_scenarios' else 'gemte nøgletal'),
             key='review_forecast_choice')
         st.caption(f"Prognose: {friendly_time(chosen['origin'])} · officiel deadline: {friendly_time(chosen['deadline_at'])}. Tiderne er dansk tid.")

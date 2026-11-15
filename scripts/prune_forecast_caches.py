@@ -3,9 +3,9 @@
 Kept:
 - the newest N caches (by modification time);
 - every cache referenced by a saved forecast review;
-- for every GW deadline, the cache of the last saved transfer report created
-  before that deadline. That is the run the evaluation protocol scores, so its
-  scenarios must survive until the round is reviewed (CRPS needs them).
+- for every GW deadline and model, the cache of the last saved transfer report
+  created before that deadline. That is the run the evaluation protocol scores,
+  so its scenarios must survive until the round is reviewed (CRPS needs them).
 
 Everything else is moved, never deleted, to artifacts/transfer_forecasts/_to_delete/.
 Dry run by default; pass --apply to move.
@@ -47,13 +47,15 @@ def protected_keys(artifacts):
         key, created = forecast.get('cache_key'), report.get('created_at')
         if not isinstance(key, str) or not created:
             continue
+        # Older reports without a model name were made with the standard model.
+        model = str(forecast.get('model_version') or 'component_baseline_v1').split('__')[0]
         for event, deadline in (forecast.get('deadlines') or {}).items():
             if _time(created) < _time(deadline):
-                best = latest.get(event)
+                best = latest.get((event, model))
                 if best is None or _time(created) > best[0]:
-                    latest[event] = (_time(created), key, path.parent.name)
-    for event, (_, key, name) in latest.items():
-        keep.setdefault(key, f'last run before GW{event} deadline ({name})')
+                    latest[(event, model)] = (_time(created), key, path.parent.name)
+    for (event, model), (_, key, name) in sorted(latest.items()):
+        keep.setdefault(key, f'last {model} run before GW{event} deadline ({name})')
     return keep
 
 

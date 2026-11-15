@@ -37,12 +37,17 @@ def test_keeps_newest_reviewed_and_last_pre_deadline_and_moves_rest(tmp_path):
           forecast=dict(cache_key=key(3), deadlines=deadline)))
     write(art/'forecast_reviews/r/report.json', dict(forecast_metadata=dict(cache_key=key(4))))
     m = script()
+    # A later run of another model is kept too and does not displace the standard run.
+    write(art/'transfers/v2/report.json', dict(created_at='2026-11-20T11:00:00+00:00',
+          forecast=dict(cache_key=key(5), deadlines=deadline, model_version='component_minutes_v2')))
+    write(art/'transfers/b/report.json', dict(created_at='2026-11-20T10:00:00+00:00',
+          forecast=dict(cache_key=key(2), deadlines=deadline, model_version='component_baseline_v1')))
     caches, keep, move = m.plan(art, newest=1)
-    assert set(keep) == {key(2), key(4), key(6)}
-    assert {p.name for p in move} == {key(1), key(3), key(5)}
+    assert set(keep) == {key(2), key(4), key(5), key(6)}
+    assert {p.name for p in move} == {key(1), key(3)}
     assert m.main(['--artifacts', str(art), '--keep-newest', '1']) == 0
     assert not (art/'transfer_forecasts/_to_delete').exists()
     assert m.main(['--artifacts', str(art), '--keep-newest', '1', '--apply']) == 0
     moved = {p.name for p in (art/'transfer_forecasts/_to_delete').iterdir()}
-    assert moved == {key(1), key(3), key(5)}
+    assert moved == {key(1), key(3)}
     assert (art/'transfer_forecasts'/key(2)/'bundle.json').exists()

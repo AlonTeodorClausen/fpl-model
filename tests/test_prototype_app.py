@@ -67,6 +67,6 @@ def test_analysis_page_shows_one_experiment_overview(monkeypatch,tmp_path):
     monkeypatch.setattr(source,'load_data',lambda path:d)
     app=open_analysis()
     assert not app.exception
-    table=next(f.value for f in app.dataframe if 'Forsøg' in f.value.columns)
+    table=next(t.value for t in app.table if t.value.index.name=='Forsøg')
     assert set(table.Status)=={'Standard','Tilvalg','Afprøves','Pensioneret'}
     assert not any(e.label.startswith('Tre frekvenspriorer') for e in app.expander)
