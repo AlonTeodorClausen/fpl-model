@@ -13,7 +13,8 @@ from fpl_model.label_contracts import utc
 
 VERSION = 'component_minutes_v2'
 HALF_LIFE_MATCHES = 5.0
-PRIOR_MATCHES = 2.0
+PRIOR_MATCHES = 2.0  # form level: weighted recent matches -> player's season level
+SEASON_PRIOR_MATCHES = 1.0  # season level: player's season -> v1 start prior / position rates
 FULL_MATCH_MINUTES = 89
 EARLY_EXIT_SD = 12.0
 RETURN_START_FACTOR = 0.7
@@ -85,16 +86,24 @@ def apply_minutes_v2(par, history, prior, player, *, live):
     sub = ~start & (mins > 0)
     full = start & (mins >= FULL_MATCH_MINUTES)
     early = start & ~full
-    k = PRIOR_MATCHES
+    k, c = PRIOR_MATCHES, SEASON_PRIOR_MATCHES
 
-    def smooth(hits, weights, centre):
-        return float((hits+k*centre)/(weights+k))
+    def smooth(hits, weights, centre, strength):
+        return float((hits+strength*centre)/(weights+strength))
 
-    p_start = smooth((w*start).sum(), w.sum(), prior['start'])
-    p_sub_ns = smooth((w*sub).sum(), (w*~start).sum(), prior['sub_given_no_start'])
-    p_full = smooth((w*full).sum(), (w*start).sum(), prior['full_match'])
-    early_minutes = smooth((w*mins*early).sum(), (w*early).sum(), prior['early_exit_minutes'])
-    sub_minutes = smooth((w*mins*sub).sum(), (w*sub).sum(), prior['sub_minutes'])
+    # Season level: unweighted own season, shrunk like v1 (start) or to position rates.
+    season = dict(
+        start=smooth(start.sum(), len(used), e['prior_start'], c),
+        sub_given_no_start=smooth(sub.sum(), (~start).sum(), prior['sub_given_no_start'], c),
+        full_match=smooth(full.sum(), start.sum(), prior['full_match'], c),
+        early_exit_minutes=smooth((mins*early).sum(), early.sum(), prior['early_exit_minutes'], c),
+        sub_minutes=smooth((mins*sub).sum(), sub.sum(), prior['sub_minutes'], c))
+    # Form level: recency-weighted matches, shrunk to the player's season level.
+    p_start = smooth((w*start).sum(), w.sum(), season['start'], k)
+    p_sub_ns = smooth((w*sub).sum(), (w*~start).sum(), season['sub_given_no_start'], k)
+    p_full = smooth((w*full).sum(), (w*start).sum(), season['full_match'], k)
+    early_minutes = smooth((w*mins*early).sum(), (w*early).sum(), season['early_exit_minutes'], k)
+    sub_minutes = smooth((w*mins*sub).sum(), (w*sub).sum(), season['sub_minutes'], k)
     p_sub = (1-p_start)*p_sub_ns
     if missed:
         moved = p_start*(1-RETURN_START_FACTOR)
@@ -109,6 +118,7 @@ def apply_minutes_v2(par, history, prior, player, *, live):
     e.update(pre_injury_start=p_start, pre_injury_sub=p_sub)
     e['role'] = dict(method=VERSION, status='estimated', position_prior=prior,
                      half_life_matches=HALF_LIFE_MATCHES, prior_matches=k,
+                     season_prior_matches=c, season_level=season,
                      fixture_ids=[r['fixture_id'] for r in used], weights=w.tolist(),
                      returning_after_missed_matches=missed,
                      p_start_given_available=p_start, p_sub_given_available=p_sub,

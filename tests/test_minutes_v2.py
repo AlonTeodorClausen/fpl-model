@@ -58,8 +58,9 @@ def test_recent_matches_weigh_more():
             if r['player_id'] == 3:
                 r['minutes'] = pattern[r['event']-1]
                 r['starts'] = int(r['minutes'] >= 60)
-    a = simulate(lost, 5, BaselineConfig(), draws=200, seed=4, evolution=v2())
-    b = simulate(gained, 5, BaselineConfig(), draws=200, seed=4, evolution=v2())
+    # Retrospective: isolate recency weighting from the live return-from-absence rule.
+    a = simulate(lost, 5, BaselineConfig(), draws=200, seed=4, evolution=v2(), retrospective=True)
+    b = simulate(gained, 5, BaselineConfig(), draws=200, seed=4, evolution=v2(), retrospective=True)
     assert b.parameters[3]['p_start'] > a.parameters[3]['p_start']
 
 

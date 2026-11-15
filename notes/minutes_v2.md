@@ -36,7 +36,8 @@ Detaljer:
 | Parameter | Værdi |
 |---|---:|
 | Halveringstid for vægte | 5 kampe |
-| Prior-styrke (alle tre trin) | 2 kampe |
+| Prior-styrke, formniveau (seneste kampe mod spillerens sæson) | 2 kampe |
+| Prior-styrke, sæsonniveau (sæson mod v1-prior 45 % / positionens tal) | 1 kamp |
 | Hel kamp | 89 minutter eller mere |
 | Spredning for tidlig udskiftning | 12 minutter |
 | Startchance-faktor efter fravær | 0,7 |
@@ -60,3 +61,21 @@ Rettelsen har to niveauer i stedet for ét:
 2. **Formniveau.** De vægtede seneste kampe (halveringstid 5) trækkes mod spillerens sæsonniveau med styrke 2.
 
 Alt andet er uændret: tre trin, halveringstid 5, hel kamp trukket for sig, spredning 12, fravær og faktor 0,7. Kandidaten fryses efter denne ene rettelse, uanset hvad den næste tekniske kontrol viser, medmindre den afslører en egentlig programmeringsfejl. Resultatet af kontrollen noteres herunder, men er stadig ikke evidens.
+
+**Teknisk kontrol efter rettelsen, GW3–10, seed 42, 1.000 scenarier, 4.744 fælles spiller-GW-rækker.** Udviklingsdata, ikke evidens.
+
+| | v1 | v2 |
+|---|---:|---:|
+| Point-CRPS, alle | 0,800 | 0,788 |
+| Point-MAE, alle | 1,313 | 1,227 |
+| Minut-MAE, alle | 17,6 | 14,5 |
+| DNP-Brier, alle | 0,116 | 0,110 |
+| Point-CRPS, `regular` (1.332 rækker) | 1,689 | 1,692 |
+| Point-MAE, `regular` | 2,518 | 2,553 |
+| Minut-MAE, `regular` | 20,8 | 17,2 |
+| Minut-bias, `regular` | −1,9 | +3,9 |
+| DNP-Brier, `regular` | 0,080 | 0,079 |
+
+Det simple gennemsnit af tidligere minutter har minut-MAE 15,7 for `regular` på de samme rækker, så v2 slår det stadig ikke for faste spillere. v2 overvurderer nu faste spilleres minutter lidt, hvor v1 undervurderede dem. Point-CRPS for `regular` er næsten uændret. Gevinsten ligger mest hos de øvrige spillere.
+
+Kandidaten er hermed frosset. Den prospektive afprøvning på GW12–15 afgør, om den accepteres.
