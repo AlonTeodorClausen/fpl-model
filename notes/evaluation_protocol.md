@@ -54,6 +54,14 @@ GW8–9 er hentet fra efterkontrollen `artifacts/forecast_reviews/20261107T09135
 
 Udviklingsrunderne samlet: realiseret gevinst +3 point mod 5,00 forventet. Det er tre runder og ikke evidens for noget; det er en baggrund for at holde øje med, om modellen systematisk overvurderer værdien af transfers.
 
+## Registrerede kandidater
+
+| Kandidat | Frosset | Vurderingsrunder | Status |
+|---|---|---|---|
+| `component_minutes_v2` ([specifikation](minutes_v2.md)) | 15. november 2026, commit `0e5e6e4` | GW12–15 | Afventer |
+
+For hver vurderingsrunde gemmes både en standardprognose og en v2-prognose før deadline, med samme datagrundlag, seed 42 og 3.000 scenarier. Begge efterkontrolleres mod samme endelige udfald.
+
 ## Ændringer i protokollen
 
 Ingen endnu.
