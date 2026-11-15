@@ -63,9 +63,10 @@ def test_lab_editor_uses_its_own_widget_keys(monkeypatch,tmp_path):
     # Shared keys with Mit hold let the browser send empty values after a page switch.
     setup(monkeypatch,tmp_path);save_profile(ready_profile(),tmp_path/'data/processed/my_team.json')
     app=AppTest.from_file(str(ROOT/'app.py')).run(timeout=30)
-    assert app.session_state['owned_free'] is not None
+    saved=ready_profile()
+    assert app.session_state['owned_free']==saved['free_transfers']
     next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
     next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
     assert not app.exception
-    assert app.session_state['lab_owned_free']==app.session_state['owned_free']
-    assert app.session_state['lab_owned_id_0'] is not None
+    assert app.session_state['lab_owned_free']==saved['free_transfers']
+    assert app.session_state['lab_owned_id_0'] in {p['player_id'] for p in saved['players']}
