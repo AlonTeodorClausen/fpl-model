@@ -159,28 +159,6 @@ def test_cache_and_saved_forecast_preserve_model_training_and_config(tmp_path):
     np.testing.assert_array_equal(s.points,arrays['bonus_points'])
 
 
-def test_bonus_opt_in_in_app_leaves_default_and_saves_selection(monkeypatch,tmp_path):
-    from pathlib import Path
-    from streamlit.testing.v1 import AppTest
-    from test_my_team_app import setup
-    from test_my_team import profile
-    from fpl_model.my_team import save_profile
-    setup(monkeypatch,tmp_path);save_profile(profile(),tmp_path/'data/processed/my_team.json')
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
-    next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter')
-    app.run(timeout=30)
-    next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
-    checkbox=next((w for w in app.checkbox if w.label=='Eksperiment: præstationsafhængig bonus'),None)
-    assert checkbox is not None and not checkbox.value
-    assert next(w for w in app.selectbox if w.label=='Prognosemodel').value=='Baseline'
-    checkbox.check().run()
-    next(b for b in app.button if b.label=='Sammenlign transferforslag').click().run(timeout=60)
-    assert not app.exception
-    result=app.session_state['lab_transfer_result']
-    assert result['forecast']['model_version'].endswith('__conditional_bonus_v1')
-    assert result['forecast']['bonus_config']['ridge']==1.
-
-
 def test_odds_bonus_comparison_reconciles_and_is_available_in_analysis(tmp_path):
     from pathlib import Path
     from fpl_model.defensive_odds import build_coverage

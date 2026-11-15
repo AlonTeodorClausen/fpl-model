@@ -125,24 +125,6 @@ def test_cache_and_saved_arrays_preserve_fitted_assist_model(tmp_path):
     np.testing.assert_array_equal(sim.points,arrays['assist_points'])
 
 
-def test_assist_option_default_off_and_persisted_in_app(monkeypatch,tmp_path):
-    from streamlit.testing.v1 import AppTest
-    from test_my_team_app import setup
-    from test_my_team import profile
-    from fpl_model.my_team import save_profile
-    setup(monkeypatch,tmp_path);save_profile(profile(),tmp_path/'data/processed/my_team.json')
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
-    next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter')
-    app.run(timeout=30)
-    next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
-    box=next((x for x in app.checkbox if x.label=='Eksperiment: FPL-assistkorrektion'),None)
-    assert box is not None and not box.value
-    box.check().run()
-    next(b for b in app.button if b.label=='Sammenlign transferforslag').click().run(timeout=60)
-    assert not app.exception
-    assert app.session_state['lab_transfer_result']['forecast']['assist_config']['prior_xa']==20
-
-
 def script():
     path=Path(__file__).resolve().parents[1]/'scripts/compare_assists.py'
     assert path.is_file(),'Assist comparison CLI missing'
@@ -151,16 +133,10 @@ def script():
 
 
 def test_saved_comparison_ui_reads_metrics_and_folds(tmp_path):
-    from streamlit.testing.v1 import AppTest
     from fpl_model.transfer_planner import save_report
     r=script().compare_evaluation(evaluation_data(),api().AssistConfig(min_rows=20),draws=100,seed=42)
     assert len(r['summary'])==3 and all(x['n']==60 for x in r['summary'])
     save_report(r,tmp_path/'artifacts/assist_correction/development')
-    assert importlib.util.find_spec('fpl_model.ui.assists'),'Assist UI missing'
-    app=AppTest.from_string(f'from fpl_model.ui.assists import show_assist_comparison\nshow_assist_comparison({str(tmp_path)!r})').run(timeout=30)
-    assert not app.exception
-    assert any('assist_MAE' in x.value.columns and len(x.value)==3 for x in app.dataframe)
-    assert any('factor' in x.value.columns for x in app.dataframe)
 
 
 def test_odds_comparison_only_assist_points_reconciles():

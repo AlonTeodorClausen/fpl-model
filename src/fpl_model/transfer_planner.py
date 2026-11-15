@@ -119,7 +119,7 @@ def forecast_bundle(data, events, config, *, origin_at, cache_root, draws=3000, 
         raise ValueError('Transferregler i snapshot er ændret; kræver eksplicit understøttelse.')
     code_root = Path(__file__).parent
     files = ['transfer_planner.py','models/baseline.py','simulation.py','scoring.py',
-             'history_coverage.py','attacking_odds.py','diagnostics.py','defensive_odds.py','odds_api_markets.py','availability.py','model_evolution.py','role_minutes.py','set_piece_roles.py','conditional_bonus.py','season_priors.py','assist_correction.py']
+             'history_coverage.py','attacking_odds.py','diagnostics.py','defensive_odds.py','odds_api_markets.py','availability.py','model_evolution.py','role_minutes.py','set_piece_roles.py','conditional_bonus.py','season_priors.py','assist_correction.py','minutes_v2.py']
     code = {name: hashlib.sha256((code_root/name).read_bytes()).hexdigest() for name in files}
     key = hashlib.sha256(_json(dict(data=data, events=events, config=asdict(config), origin=origin.isoformat(),
                                    draws=draws, seed=seed, odds=odds, code=code, availability=availability,

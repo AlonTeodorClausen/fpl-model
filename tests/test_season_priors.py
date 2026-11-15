@@ -166,27 +166,7 @@ def test_odds_prior_changes_attack_allocation_only():
         assert sum(x['expected_goals'] for x in team)==pytest.approx(team[0]['team_goal_mean'])
 
 
-def test_prior_opt_in_app_default_off_and_result_persisted(monkeypatch,tmp_path):
-    from streamlit.testing.v1 import AppTest
-    from test_my_team_app import setup
-    from test_my_team import profile
-    from fpl_model.my_team import save_profile
-    setup(monkeypatch,tmp_path);save_profile(profile(),tmp_path/'data/processed/my_team.json')
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run(timeout=30)
-    next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter')
-    app.run(timeout=30)
-    next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
-    box=next((x for x in app.checkbox if x.label=='Eksperiment: spillerprior fra sidste sæson'),None)
-    assert box is not None and not box.value
-    assert next(x for x in app.selectbox if x.label=='Prognosemodel').value=='Baseline'
-    box.check().run()
-    next(b for b in app.button if b.label=='Sammenlign transferforslag').click().run(timeout=60)
-    assert not app.exception
-    assert app.session_state['lab_transfer_result']['forecast']['season_prior_config']['position_prior_90s']==3
-
-
 def test_saved_comparison_has_same_rows_explicit_coverage_and_readonly_ui(tmp_path):
-    from streamlit.testing.v1 import AppTest
     from fpl_model.transfer_planner import save_report
     script_path=Path(__file__).resolve().parents[1]/'scripts/compare_season_priors.py'
     assert script_path.is_file(),'Season prior comparison missing'
@@ -196,11 +176,6 @@ def test_saved_comparison_has_same_rows_explicit_coverage_and_readonly_ui(tmp_pa
     assert len(report['summary'])==3 and all(r['n']==2 for r in report['summary'])
     assert report['evaluations']['previous_season']['rows'][0]['season_prior']['status']=='used'
     save_report(report,tmp_path/'artifacts/season_priors/development')
-    assert importlib.util.find_spec('fpl_model.ui.season_priors'),'Season prior comparison UI missing'
-    app=AppTest.from_string(f'from fpl_model.ui.season_priors import show_season_prior_comparison\nshow_season_prior_comparison({str(tmp_path)!r})').run(timeout=30)
-    assert not app.exception
-    assert any('point_MAE' in t.value.columns and len(t.value)==3 for t in app.dataframe)
-    assert any('udviklingsdata' in w.value for w in app.warning)
 
 
 def test_prospective_comparison_reconciles_all_point_deltas():

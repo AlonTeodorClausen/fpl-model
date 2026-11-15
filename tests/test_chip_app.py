@@ -33,7 +33,7 @@ def test_analysis_still_has_model_choices(monkeypatch,tmp_path):
     next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
     next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
     assert not app.exception
-    assert len(next(w for w in app.selectbox if w.label=='Prognosemodel').options)==6
+    assert next(w for w in app.selectbox if w.label=='Prognosemodel').options==['Standardmodel','Odds til angreb og forsvar · William Hill','Eksperiment · minutmodel v2']
 
 
 def test_unsaved_chip_choice_provenance_is_stable_across_reruns(monkeypatch,tmp_path):

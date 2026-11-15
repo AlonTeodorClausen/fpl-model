@@ -23,11 +23,15 @@ class EvolutionConfig:
             raise ValueError('Positive recent match window required')
         if any(not math.isfinite(v) or v<=0 for v in (self.half_life_matches,self.role_prior_games,self.transition_prior_games)):
             raise ValueError('Positive finite role assumptions required')
-        if self.minutes_method not in ('recent_role_v1','role_transitions_v2'):raise ValueError('Unknown minutes method')
+        if self.minutes_method not in ('recent_role_v1','role_transitions_v2','minutes_v2'):raise ValueError('Unknown minutes method')
         if type(self.shared_goals) is not bool:raise ValueError('shared_goals must be boolean')
+        if self.minutes_method=='minutes_v2' and self.shared_goals:raise ValueError('Minutes v2 changes minutes only; shared goals must be off')
 
     @property
     def version(self):
+        if self.minutes_method=='minutes_v2':
+            from fpl_model.minutes_v2 import VERSION
+            return VERSION
         if self.minutes_method=='role_transitions_v2':
             return 'component_shared_goals_role_transitions_v2' if self.shared_goals else 'component_role_transitions_v2'
         return 'component_shared_goals_v1' if self.shared_goals else 'component_role_minutes_v1'

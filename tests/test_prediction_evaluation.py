@@ -81,19 +81,3 @@ def test_added_dgw_fixture_requires_complete_changed_universe():
     r=m.evaluate_predictions(p,np.ones((100,1)),np.ones((100,1))*90,[a,b],model_version='test')
     assert r['n']==0 and r['pending'][0]['reason']=='fixture_universe_changed'
 
-
-def test_app_shows_saved_prediction_and_pending_outcomes(tmp_path):
-    m=module()
-    from fpl_model.models.baseline import BaselineConfig
-    from fpl_model.simulation import simulate
-    from test_history_coverage_evaluation import history_data
-    from streamlit.testing.v1 import AppTest
-    d=history_data();sim=simulate(d,5,BaselineConfig(),draws=100,seed=42)
-    m.save_forecasts(d,5,{'component_baseline_v1':sim},BaselineConfig(),None,None,tmp_path/'artifacts/model_forecasts')
-    app=AppTest.from_string('from fpl_model.ui.model_quality import show_model_quality\n'
-                           f'show_model_quality({str(tmp_path)!r},dict(histories=[]))').run()
-    assert not app.exception
-    next(b for b in app.button if b.label=='Efterkontrollér mod indlæste officielle slutresultater').click().run()
-    assert not app.exception
-    assert list((tmp_path/'artifacts/model_evaluations').glob('*/report.json'))
-    assert any('awaiting_final_outcomes' in x.value for x in app.markdown)

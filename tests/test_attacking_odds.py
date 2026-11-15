@@ -99,11 +99,11 @@ def test_app_exposes_explicit_attack_scope_without_network(monkeypatch,tmp_path)
     app.run(timeout=30)
     next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
     model=next(w for w in app.selectbox if w.label=='Prognosemodel')
-    assert model.value=='Baseline'
+    assert model.value=='Standardmodel'
     model.set_value('Odds til angreb og forsvar · William Hill').run()
     next(b for b in app.button if b.label=='Sammenlign transferforslag').click().run(timeout=60)
     assert not app.exception
     report=app.session_state['lab_transfer_result']
     assert report['forecast']['model_version']=='component_attacking_odds_v1'
     assert report['odds_coverage'][5]['usable']==0
-    assert any('mål-/assist' in info.value for info in app.info)
+    assert any('assistrater' in info.value for info in app.info)

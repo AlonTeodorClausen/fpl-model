@@ -222,7 +222,7 @@ def test_experimental_odds_model_shows_fallback_coverage_before_planning(monkeyp
     next(r for r in app.radio if r.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
     next(r for r in app.radio if r.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
     next(w for w in app.selectbox if w.label=='Prognosemodel').set_value(
-        'Defensiv oddsvariant · William Hill').run(timeout=30)
+        'Odds til angreb og forsvar · William Hill').run(timeout=30)
     assert not app.exception
     assert any('Odds-dækning GW5' in x.value and '0/' in x.value for x in app.caption)
     assert any('baseline-fallback' in x.value for x in app.warning)
