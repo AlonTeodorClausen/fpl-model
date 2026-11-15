@@ -25,6 +25,7 @@ from fpl_model.ui.strategy import (availability_controls, scenario_records,
 from fpl_model.ui.team_import import render_import
 from fpl_model.ui.guest_state import guest_mode, guest_root, parse_guest_profile_bytes
 from fpl_model.ui.guest_limits import GuestLimitError,claim_guest_job
+from fpl_model.ui.editor_keys import editor_key
 from fpl_model.ui.player_detail import (selected_owned_id, comparison_rows, point_distribution,
                                         bundle_for_report)
 from fpl_model.ui.decision_summary import immediate_decision, sequence_decision, alternative_previews
@@ -98,14 +99,14 @@ def _capture_time(path):
 
 def _reset_editor(profile):
     for key in list(st.session_state):
-        if key.startswith('owned_'):
+        if key.startswith(('owned_','lab_owned_')):
             del st.session_state[key]
     st.session_state.pop('sale_adjusted_ids',None)
     st.session_state['team_draft'] = profile
 
 
 def _clear_sale(slot):
-    st.session_state[f'owned_sale_{slot}'] = None
+    st.session_state[editor_key(f'owned_sale_{slot}')] = None
 
 
 def _example(players, season):
@@ -292,6 +293,7 @@ def _saved_report_picker(root, state_prefix):
 
 def render(*, experimental_mode=False):
     state_prefix='lab_' if experimental_mode else ''
+    st.session_state['_editor_key_prefix']=state_prefix
     guest=guest_mode()
     st.html('<div class="lab-kicker">FPL LAB · HOLDPLANLÆGGER</div>')
     st.title('Transferlaboratorium' if experimental_mode else 'Mit hold · næste træk')
@@ -392,8 +394,8 @@ def render(*, experimental_mode=False):
         # squad and chip choices stay in their mounted widgets.
         st.session_state['team_draft']=reconciled
         for key,player_id in list(st.session_state.items()):
-            if key.startswith('owned_id_') and player_id in changed:
-                sale_key='owned_sale_'+key.removeprefix('owned_id_')
+            if key.startswith(editor_key('owned_id_')) and player_id in changed:
+                sale_key=editor_key('owned_sale_'+key.removeprefix(editor_key('owned_id_')))
                 sale=st.session_state.get(sale_key)
                 maximum_sale=pool[player_id]['now_cost']/10
                 if sale is not None and sale>maximum_sale:
@@ -549,15 +551,20 @@ def render(*, experimental_mode=False):
         missing = [r['player_id'] for r in draft.get('players',[]) if r['player_id'] not in pool]
         if missing:st.warning(f'Gemte spiller-ID’er findes ikke i snapshot: {missing}. Vælg dem eksplicit igen.')
         cols=st.columns(3)
-        st.session_state.setdefault('owned_bank',draft['bank']/10 if draft.get('bank') is not None else None)
-        st.session_state.setdefault('owned_free',draft.get('free_transfers'))
-        st.session_state.setdefault('owned_made',draft.get('transfers_made'))
+        # In the browser, switching pages can leave these number inputs empty
+        # (None) rather than unset, so setdefault alone would not restore them.
+        # Refill an empty field from the draft; a typed value is never overwritten.
+        for key,value in ((editor_key('owned_bank'),draft['bank']/10 if draft.get('bank') is not None else None),
+                          (editor_key('owned_free'),draft.get('free_transfers')),
+                          (editor_key('owned_made'),draft.get('transfers_made'))):
+            if st.session_state.get(key) is None:
+                st.session_state[key]=value
         bank=cols[0].number_input('Bank (£m)',min_value=0.,step=.1,
-                                 value=None,key='owned_bank')
+                                 value=None,key=editor_key('owned_bank'))
         free=cols[1].number_input('Resterende gratis transfers',min_value=0,max_value=5,
-                                 value=None,step=1,key='owned_free')
+                                 value=None,step=1,key=editor_key('owned_free'))
         made=cols[2].number_input('Transfers allerede foretaget denne GW',min_value=0,max_value=20,
-                                 value=None,step=1,key='owned_made')
+                                 value=None,step=1,key=editor_key('owned_made'))
         profile=None; error=None
         from fpl_model.ui.chips import render_chip_inventory,render_chip_schedule
         chip_fields={}
@@ -576,14 +583,19 @@ def render(*, experimental_mode=False):
                     cols=st.columns([3,1])
                     # Explicit state sends the reset to mounted browser widgets; merely
                     # changing a keyed widget's default leaves its visible value stale.
-                    st.session_state.setdefault(f'owned_id_{slot}',entry.get('player_id'))
+                    st.session_state.setdefault(editor_key(f'owned_id_{slot}'),entry.get('player_id'))
                     value=entry.get('selling_price')
-                    st.session_state.setdefault(f'owned_sale_{slot}',value/10 if value is not None else None)
+                    # Same page-switch refill as bank/transfers above, but only while
+                    # the slot still holds the saved player: changing the player
+                    # clears the sale on purpose (_clear_sale).
+                    if (st.session_state.get(editor_key(f'owned_sale_{slot}')) is None
+                            and st.session_state.get(editor_key(f'owned_id_{slot}'))==entry.get('player_id')):
+                        st.session_state[editor_key(f'owned_sale_{slot}')]=value/10 if value is not None else None
                     pid=cols[0].selectbox(f'{name} {j+1}',choices,
-                                          format_func=lambda i:labels.get(i,'Vælg spiller'),key=f'owned_id_{slot}',
+                                          format_func=lambda i:labels.get(i,'Vælg spiller'),key=editor_key(f'owned_id_{slot}'),
                                           on_change=_clear_sale,args=(slot,))
                     sale=cols[1].number_input(f'Salgsværdi {name.lower()} {j+1} (£m)',min_value=0.,step=.1,
-                                              value=None,key=f'owned_sale_{slot}')
+                                              value=None,key=editor_key(f'owned_sale_{slot}'))
                     selected.append((pid,sale));slot+=1
         try:
             if free is None or made is None:raise ValueError('Angiv resterende gratis transfers og antal transfers allerede foretaget denne GW.')
