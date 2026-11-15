@@ -29,15 +29,18 @@ def test_id_and_link_parsing_rejects_untrusted_urls():
         with pytest.raises(ValueError):mod().parse_team_id(text)
 
 
-def test_public_capture_preserves_bytes_and_never_guesses_economy(tmp_path):
+def test_public_capture_preserves_bytes_and_labels_estimated_sale_prices(tmp_path):
     boot,entry,picks=payloads();raw=[json.dumps(x,indent=2).encode()+b'\n' for x in (boot,entry,picks)]
     session=session_for(*(response(x) for x in raw))
     result=mod().capture_team('3533723',tmp_path/'raw',session=session,clock=lambda:NOW)
     assert result['entry_id']==3533723 and result['event']==5
     assert len(result['players'])==15 and result['bank_at_deadline']==7
     draft=mod().make_draft(result,dict(players=boot['elements'],events=boot['events'],season='2026-2027'))
-    assert all(p['selling_price'] is None for p in draft['players'])
-    assert draft['free_transfers'] is None and draft['transfers_made'] is None and draft['bank']==7
+    assert {p['player_id']:p['selling_price'] for p in draft['players']}=={
+        p['id']:p['now_cost'] for p in result['players']}
+    assert draft['price_estimate_ids']==sorted(p['id'] for p in result['players'])
+    assert draft['free_transfers'] is None and draft['transfers_made'] is None and draft['bank'] is None
+    assert draft['import_provenance']['bank_at_deadline']==7
     root=Path(result['snapshot_path']);manifest=json.loads((root/'manifest.json').read_text())
     assert [ (root/f['relative_path']).read_bytes() for f in manifest['files'] ]==raw
     assert (root/'COMPLETE').is_file()
@@ -71,6 +74,20 @@ def test_mapping_requires_canonical_identity_and_explicit_local_money_reuse(tmp_
     with pytest.raises(ValueError):mod().make_draft(res,dict(data,season='2025-2026'))
     wrong_saved=copy.deepcopy(saved);wrong_saved['players'][0]['player_id']=999
     with pytest.raises(ValueError):mod().make_draft(res,data,previous=wrong_saved,keep_existing=True)
+
+
+def test_reused_sale_above_current_price_is_capped_only_in_draft(tmp_path):
+    boot,entry,picks=payloads()
+    res=mod().capture_team('3533723',tmp_path,session=session_for(*(
+        response(json.dumps(x).encode()) for x in (boot,entry,picks))),clock=lambda:NOW)
+    data=dict(players=boot['elements'],events=boot['events'],season='2026-2027')
+    saved=profile();saved['players'][0]['selling_price']=boot['elements'][0]['now_cost']+1
+    before=copy.deepcopy(saved)
+    draft=mod().make_draft(res,data,previous=saved,keep_existing=True)
+    assert draft['players'][0]['selling_price']==boot['elements'][0]['now_cost']
+    assert draft['price_estimate_ids']==[saved['players'][0]['player_id']]
+    assert draft['import_provenance']['adjusted_selling_price_ids']==[saved['players'][0]['player_id']]
+    assert saved==before
 
 
 def test_missing_canonical_code_cannot_match_by_absence():

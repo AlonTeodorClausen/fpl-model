@@ -1,5 +1,6 @@
-"""Local user-owned squad; money is integer tenths of a million, never buy-price profit guesses."""
+"""Local user-owned squad; money is integer tenths of a million and estimates are flagged."""
 from collections import Counter
+from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 import json
 import os
@@ -20,6 +21,30 @@ def money(value):
         return int(amount)
     except (ValueError, InvalidOperation):
         raise ValueError('Beløb skal være positive eller nul, i trin på £0,1m.') from None
+
+
+def reconcile_sale_prices(profile, players):
+    """Cap stale local values in a draft; retain an explicit estimate flag.
+
+    A public FPL team does not expose the owner's actual sale prices. Capping an
+    impossible old value is only a usable estimate, never a verified price.
+    The saved profile and the supplied player rows are left untouched.
+    """
+    draft = deepcopy(profile)
+    prices = {p['id']: p.get('now_cost') for p in players}
+    estimates = set(draft.get('price_estimate_ids', []))
+    changed = []
+    for row in draft.get('players', []):
+        pid = row.get('player_id')
+        sale = row.get('selling_price')
+        current = prices.get(pid)
+        if type(sale) is int and type(current) is int and current > 0 and sale > current:
+            row['selling_price'] = current
+            estimates.add(pid)
+            changed.append(pid)
+    if changed or 'price_estimate_ids' in draft:
+        draft['price_estimate_ids'] = sorted(estimates)
+    return draft, changed
 
 
 def _integer(value, low, high, label):
@@ -72,7 +97,7 @@ def validate_profile(profile, players, *, season):
     for row in profile['players']:
         current = pool[row['player_id']].get('now_cost')
         if current is None or row['selling_price'] > current:
-            raise ValueError('Salgsværdi overstiger købspris i snapshot; kontrollér priser og datagrundlag.')
+            raise ValueError('Salgsværdi overstiger aktuel listepris i datagrundlaget; kontrollér den angivne salgsværdi.')
     if profile.get('pre_transfer_state'):
         state=profile['pre_transfer_state']
         validate_profile(dict(schema_version=1,season=season,players=state['players'],bank=state['bank'],

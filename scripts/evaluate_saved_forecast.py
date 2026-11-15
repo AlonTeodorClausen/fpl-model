@@ -20,8 +20,13 @@ def main(argv=None):
     out,result=review_forecast(args.forecast,data['histories'],args.output_root,
         season=data['season'],context=context,outcome_source=source)
     print(out)
-    print(result['outcome_context']['status'])
-    for name,r in result['variants'].items():print(name,r['status'],r['n'])
+    if result.get('format')=='daily_transfer':
+        for event,details in sorted(result['events'].items(),key=lambda item:int(item[0])):
+            print(f"GW{event}: {details['model_all']['n']} final outcomes; {len(details['pending'])} pending")
+        print('saved team comparison:',result['team_comparison']['status'])
+    else:
+        print(result['outcome_context']['status'])
+    for name,r in result['variants'].items():print(name,r.get('status','scored' if r['n'] else 'pending'),r['n'])
     return 0
 
 

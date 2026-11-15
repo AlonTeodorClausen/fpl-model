@@ -33,6 +33,36 @@ def test_autosub_option_beats_unconditional_xp_and_cameo_blocks_cover():
     assert 6 in cameo['starters'] and 14 in cameo['bench']
 
 
+def test_team_contribution_attribution_includes_autosub_and_captain_vice():
+    rows,points,active=fixture()
+    team=optimize(list(range(15)),rows,points,active)
+    evaluated=evaluate_squad(team,rows,points,active)
+    contributions=evaluated['player_mean_points']
+    assert contributions[14]['xi']==pytest.approx(3.5)
+    assert contributions[6]['autosub']==pytest.approx(2.0)
+    assert contributions[6]['xi']==0
+    assert sum(row['total'] for row in contributions.values())==pytest.approx(evaluated['points'].mean())
+    assert sum(row['captain'] for row in contributions.values())==pytest.approx(evaluated['captain_bonus'].mean())
+
+    # If the captain is absent, the vice's additional points belong to the vice.
+    team['captain']=14
+    team['vice_captain']=7
+    vice=evaluate_squad(team,rows,points,active)['player_mean_points']
+    assert vice[14]['captain']==pytest.approx(3.5)
+    assert vice[7]['captain']==pytest.approx(5.0)
+
+
+@pytest.mark.parametrize('chip',['bench_boost','triple_captain'])
+def test_chip_team_contributions_still_reconcile_to_scenario_points(chip):
+    rows,points,active=fixture()
+    team=optimize(list(range(15)),rows,points,active,chip=chip)
+    scored=evaluate_squad(team,rows,points,active,chip=chip)
+    parts=scored['player_mean_points'].values()
+    assert sum(row['total'] for row in parts)==pytest.approx(scored['points'].mean())
+    assert sum(row['autosub'] for row in parts)==pytest.approx(scored['bench_points'].mean())
+    assert sum(row['captain'] for row in parts)==pytest.approx(scored['captain_bonus'].mean())
+
+
 def test_exact_objective_agrees_with_existing_autosubs_and_order_is_deterministic():
     rows,_,_=fixture();rng=np.random.default_rng(7)
     active=rng.random((100,15))>.25;points=rng.integers(-2,12,(100,15))*active

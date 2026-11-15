@@ -57,3 +57,55 @@ def test_passed_deadline_and_naive_clock_never_report_ready():
     result=assess_deadline_readiness(data,datetime(2026,10,18,tzinfo=timezone.utc))
     assert result['status']=='blocked' and 'no_future_deadline' in result['reasons']
     with pytest.raises(ValueError):assess_deadline_readiness(data,datetime(2026,10,15))
+
+
+def test_incomplete_history_requires_explicit_choice_but_is_not_a_provenance_error():
+    from fpl_model.readiness import assess_deadline_readiness
+
+    data=sample()
+    data['coverage'].update(history_refresh_required=True,
+        missing_response_players=[2],quarantined_rows=1,
+        newly_finished_fixture_ids=[52])
+    data['quarantine']=[dict(requested_player_id=1,fixture_id=52)]
+    data['fixtures'][0].update(started=True,finished=False)
+    result=assess_deadline_readiness(data,datetime(2026,10,15,8,tzinfo=timezone.utc))
+    assert result['status']=='blocked'  # Strict readiness is unchanged.
+    assert result['new_forecast_status']=='limited'
+    assert result['hard_blockers']==[]
+    assert result['limited_reasons']==[
+        'history_refresh_required','missing_player_histories',
+        'quarantined_player_rows','fixtures_in_progress']
+    assert result['missing_player_ids']==[2]
+    assert result['quarantined_player_ids']==[1]
+    assert result['changed_fixture_ids']==[52]
+
+
+def test_missing_deadline_or_future_source_cannot_be_overridden_by_limited_choice():
+    from fpl_model.readiness import assess_deadline_readiness
+
+    data=sample()
+    data['events']=[]
+    data['coverage']['history_refresh_required']=True
+    result=assess_deadline_readiness(data,datetime(2026,10,15,8,tzinfo=timezone.utc))
+    assert result['new_forecast_status']=='blocked'
+    assert result['hard_blockers']==['no_future_deadline']
+    data=sample()
+    result=assess_deadline_readiness(data,datetime(2026,10,14,19,tzinfo=timezone.utc))
+    assert result['new_forecast_status']=='blocked'
+    assert result['hard_blockers']==['source_after_check_time']
+
+
+def test_identity_conflict_in_quarantine_cannot_be_accepted_as_provisional():
+    from fpl_model.readiness import assess_deadline_readiness
+
+    data=sample()
+    data['coverage']['quarantined_rows']=2
+    data['quarantine']=[
+        dict(requested_player_id=1,reasons=['fixture_not_started']),
+        dict(requested_player_id=2,reasons=['unknown_fixture_team_id'])]
+    result=assess_deadline_readiness(data,datetime(2026,10,15,8,tzinfo=timezone.utc))
+    assert result['new_forecast_status']=='blocked'
+    assert result['hard_blockers']==['identity_conflict']
+    assert result['quarantined_player_ids']==[1,2]
+    assert result['quarantine_reason_counts']=={
+        'fixture_not_started':1,'unknown_fixture_team_id':1}

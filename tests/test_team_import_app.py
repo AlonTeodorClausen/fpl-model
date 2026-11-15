@@ -31,27 +31,38 @@ def button(app,label):return next(b for b in app.button if b.label==label)
 def number(app,label):return next(w for w in app.number_input if w.label==label)
 
 
-def test_import_preview_apply_and_unknown_money_are_explicit(monkeypatch,tmp_path):
+def test_import_preview_prefills_estimated_sales_but_requires_current_bank_and_transfers(monkeypatch,tmp_path):
     result,calls,path,_=prepare(monkeypatch,tmp_path);before=path.read_bytes()
+    path.unlink()
     app=AppTest.from_file(APP).run()
     assert calls==[]
     app.text_input(key='team_import_id').set_value('3533723')
     button(app,'Hent hold fra FPL').click().run()
     assert not app.exception and calls==['3533723']
-    assert any(len(t.value)==15 and 'Aktuel købspris £m' in t.value for t in app.dataframe)
-    assert path.read_bytes()==before and number(app,'Bank (£m)').value==1.0
+    preview=next(e for e in app.expander if e.label=='Se de 15 spillere fra FPL')
+    assert not preview.proto.expanded
+    assert any(len(t.value)==15 and 'Aktuel listepris £m' in t.value for t in app.dataframe)
+    assert not path.exists() and number(app,'Bank (£m)').value is None
     button(app,'Brug dette hold').click().run()
     assert not app.exception and calls==['3533723']
-    assert number(app,'Bank (£m)').value==.7
-    assert number(app,'Salgsværdi målmand 1 (£m)').value is None
+    assert number(app,'Bank (£m)').value is None
+    assert number(app,'Salgsværdi målmand 1 (£m)').value is not None
     assert number(app,'Resterende gratis transfers').value is None
     assert number(app,'Transfers allerede foretaget denne GW').value is None
     ids={w.value for w in app.selectbox if (w.key or '').startswith('owned_id_')}
     assert ids=={p['id'] for p in result['players']}
     button(app,'Gem hold').click().run()
-    assert app.error and path.read_bytes()==before
+    assert app.error and not path.exists()
+    number(app,'Bank (£m)').set_value(.8)
+    number(app,'Resterende gratis transfers').set_value(1)
+    number(app,'Transfers allerede foretaget denne GW').set_value(0)
+    button(app,'Gem hold').click().run()
+    assert not app.exception and path.exists()
+    saved=load_profile(path)
+    assert saved['bank']==8 and len(saved['price_estimate_ids'])==15
+    assert any('estimat' in w.value.lower() for w in app.warning)
     button(app,'Sammenlign transferforslag').click().run()
-    assert app.error and not list((tmp_path/'artifacts/transfers').glob('*/report.json'))
+    assert not app.exception
 
 
 def test_explicit_reuse_save_and_reload_preserves_import_provenance(monkeypatch,tmp_path):
@@ -59,7 +70,7 @@ def test_explicit_reuse_save_and_reload_preserves_import_provenance(monkeypatch,
     app=AppTest.from_file(APP).run()
     app.text_input(key='team_import_id').set_value('3533723')
     button(app,'Hent hold fra FPL').click().run()
-    next(w for w in app.checkbox if w.label.startswith('Genbrug mine')).check().run()
+    next(w for w in app.checkbox if w.label.startswith('Bevar mine')).check().run()
     button(app,'Brug dette hold').click().run()
     assert number(app,'Bank (£m)').value==1.0
     assert number(app,'Resterende gratis transfers').value==1
@@ -71,6 +82,38 @@ def test_explicit_reuse_save_and_reload_preserves_import_provenance(monkeypatch,
     app=AppTest.from_file(APP).run()
     assert app.text_input(key='team_import_id').value=='3533723'
     assert calls==['3533723']
+
+
+def test_saved_stale_sale_is_repaired_only_in_editor_until_save(monkeypatch,tmp_path):
+    _,_,path,_=prepare(monkeypatch,tmp_path)
+    p=load_profile(path);p['players'][0]['selling_price']=46;save_profile(p,path)
+    before=path.read_bytes()
+    app=AppTest.from_file(APP).run()
+    assert not app.exception
+    assert number(app,'Salgsværdi målmand 1 (£m)').value==4.5
+    assert path.read_bytes()==before
+    assert any('salgsværdi' in w.value.lower() for w in app.warning)
+    assert sum('salgsværdi' in w.value.lower() for w in app.warning)==1
+    button(app,'Gem hold').click().run()
+    assert load_profile(path)['players'][0]['selling_price']==45
+
+
+def test_manual_sale_correction_clears_only_that_estimate(monkeypatch,tmp_path):
+    result,_,path,_=prepare(monkeypatch,tmp_path)
+    path.unlink()
+    app=AppTest.from_file(APP).run()
+    app.text_input(key='team_import_id').set_value('3533723')
+    button(app,'Hent hold fra FPL').click().run()
+    button(app,'Brug dette hold').click().run()
+    number(app,'Salgsværdi målmand 1 (£m)').set_value(4.4)
+    number(app,'Bank (£m)').set_value(.5)
+    number(app,'Resterende gratis transfers').set_value(1)
+    number(app,'Transfers allerede foretaget denne GW').set_value(0)
+    button(app,'Gem hold').click().run()
+    assert not app.exception
+    saved=load_profile(path)
+    assert len(saved['price_estimate_ids'])==14
+    assert result['picks'][0]['element'] not in saved['price_estimate_ids']
 
 
 def test_failed_fetch_clears_preview_but_not_local_team(monkeypatch,tmp_path):

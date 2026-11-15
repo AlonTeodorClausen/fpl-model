@@ -14,6 +14,7 @@ def module():
 def test_hold_distinct_from_zero_now_and_all_gains_paired(tmp_path):
     m=module();b=bundle(tmp_path);p=profile();before=copy.deepcopy(p)
     report=m.compare_sequences(b,p,max_per_gw=2,max_total=2)
+    assert report['version']=='transfer_sequences_chips_v4'
     assert p==before and report['scope']=='transfer_sequences'
     assert [p['plan_id'] for p in report['packages']]==['hold','first_0','first_1']
     hold=report['packages'][0]
@@ -25,6 +26,11 @@ def test_hold_distinct_from_zero_now_and_all_gains_paired(tmp_path):
         assert len(plan['per_gw'])==2
         assert plan['next_gw_gain']==plan['per_gw'][0]['gain']
         assert sum(s['count'] for s in plan['steps'])<=2
+        assert plan['paired_horizon']['gain_mean']==pytest.approx(plan['total_gain'])
+        for row in plan['per_gw']:
+            assert row['gain_mean']==pytest.approx(row['gain'])
+            assert sum(v['total'] for v in row['player_mean_points'].values())==pytest.approx(
+                row['mean']+row['hits'])
     assert report['recommendation']['criterion']=='optimizer_objective'
 
 

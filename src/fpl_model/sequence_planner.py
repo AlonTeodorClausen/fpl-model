@@ -10,9 +10,10 @@ from fpl_model.my_team import validate_profile
 from fpl_model.optimizer.transfer_sequences import optimize_sequence
 from fpl_model.optimizer.transfers import NoTransferSolution
 from fpl_model.optimizer.squad import evaluate_squad
+from fpl_model.transfer_planner import paired_gain_diagnostics
 from fpl_model.optimizer.lineup import refine_plan
 
-VERSION='transfer_sequences_chips_v3'
+VERSION='transfer_sequences_chips_v4'
 
 
 def _evaluate(plan,bundle):
@@ -28,6 +29,7 @@ def _evaluate(plan,bundle):
         summaries.append(dict(event=event,mean=float(v.mean()),p10=float(np.quantile(v,.1)),
                               p90=float(np.quantile(v,.9)),bench_mean=float(evaluation['bench_points'].mean()),
                               chip=step.get('chip'),bench_contribution_kind=evaluation['bench_contribution_kind'],hits=step['hits'],objective=lineup['objective']-step['hits'],
+                              player_mean_points=evaluation['player_mean_points'],
                               previous_lineup_mean=previous_mean,
                               lineup_gain=float(v.mean())-previous_mean if previous_mean is not None else None))
     return values,summaries
@@ -77,9 +79,12 @@ def compare_sequences(bundle,profile,*,max_per_gw=2,max_total=4,locked=(),exclud
         refine_plan(plan,bundle,lineup_cache)
         values,summaries=_evaluate(plan,bundle)
         if family=='hold':hold_values=values
-        for i,row in enumerate(summaries):row['gain']=float((values[i]-hold_values[i]).mean())
+        for i,row in enumerate(summaries):
+            row['gain']=float((values[i]-hold_values[i]).mean())
+            row.update(paired_gain_diagnostics(values[i],hold_values[i]))
         plan.update(per_gw=summaries,total_points=sum(r['mean'] for r in summaries),
-                    total_gain=sum(r['gain'] for r in summaries),next_gw_gain=summaries[0]['gain'])
+                    total_gain=sum(r['gain'] for r in summaries),next_gw_gain=summaries[0]['gain'],
+                    paired_horizon=paired_gain_diagnostics(np.sum(values,axis=0),np.sum(hold_values,axis=0)))
         packages.append(plan)
     rank=lambda p:(p['objective'],-sum(s['count'] for s in p['steps']),-(p['first_count'] or 0))
     ordinary=max((p for p in packages if p['comparison_family']!='chip'),key=rank)

@@ -15,7 +15,7 @@ def test_standard_main_and_chip_workflow(monkeypatch,tmp_path):
     app=AppTest.from_file(str(ROOT/'app.py')).run(timeout=30)
     assert not app.exception
     assert not any(w.label=='Prognosemodel' for w in app.selectbox)
-    assert any('Standardprognose' in w.value for w in app.info)
+    assert any('Standardprognose' in w.value for w in app.caption)
     widget=next(w for w in app.selectbox if w.label=='Chip · GW5')
     widget.set_value('triple_captain').run()
     next(b for b in app.button if b.label=='Sammenlign transferforslag').click().run(timeout=60)
