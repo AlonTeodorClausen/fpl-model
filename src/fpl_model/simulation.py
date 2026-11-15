@@ -106,9 +106,13 @@ def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False,
     if evolution:
         from fpl_model.model_evolution import position_priors, apply_role, apply_return_assumption, allocate_shared_goals
         from fpl_model.role_minutes import build_role_priors, apply_role_transition
-        priors=(build_role_priors(data.get('role_prior_players',players),histories,past,config,evolution)
+        from fpl_model.minutes_v2 import position_priors as minutes_v2_priors, apply_minutes_v2
+        pool=data.get('role_prior_players',players)
+        priors=(build_role_priors(pool,histories,past,config,evolution)
                 if evolution.minutes_method=='role_transitions_v2' else
-                position_priors(data.get('role_prior_players',players),histories,past,config))
+                minutes_v2_priors(pool,histories,past,config)
+                if evolution.minutes_method=='minutes_v2' else
+                position_priors(pool,histories,past,config))
     for p in players:
         own=[r for r in histories if r['player_id']==p['id']]
         coverage=history_window(own,past,p['team'])
@@ -119,7 +123,9 @@ def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False,
         if not coverage['usable']:
             par['fallbacks']=sorted(set(par['fallbacks']+[coverage['state']]))
         if evolution:
-            if evolution.minutes_method=='role_transitions_v2':apply_role_transition(par,priors.get(p['id']))
+            if evolution.minutes_method=='minutes_v2':
+                apply_minutes_v2(par,own if coverage['usable'] else [],priors[p['element_type']],p,live=not retrospective)
+            elif evolution.minutes_method=='role_transitions_v2':apply_role_transition(par,priors.get(p['id']))
             else:apply_role(par,own,priors[p['element_type']],evolution,config)
         original_params[p['id']]=deepcopy(par)
         if season_prior_config is not None:
@@ -258,7 +264,12 @@ def simulate(data, event, config, *, draws=3000, seed=None, retrospective=False,
 
 def _draw_player(par, pos, times, attack_factor, rng, draws, state_out=None):
     u = rng.random(draws); start = u < par['p_start']; sub = (u >= par['p_start']) & (u < par['p_start']+par['p_sub'])
-    mins = np.where(start,np.clip(np.rint(rng.normal(par['start_minutes'],8,draws)),1,90),
+    if 'full_match_prob' in par:
+        from fpl_model.minutes_v2 import draw_start_minutes
+        start_minutes = draw_start_minutes(par,rng,draws)
+    else:
+        start_minutes = np.clip(np.rint(rng.normal(par['start_minutes'],8,draws)),1,90)
+    mins = np.where(start,start_minutes,
                     np.where(sub,np.clip(np.rint(rng.normal(par['sub_minutes'],9,draws)),1,59),0)).astype(int)
     mins=np.where(start,np.minimum(mins,par.get("start_minutes_cap",90)),np.minimum(mins,par.get("sub_minutes_cap",59)))
     played = mins>0; exposure=mins/90

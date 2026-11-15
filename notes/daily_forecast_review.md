@@ -2,7 +2,7 @@
 
 Under **Analyse og eksperimenter → Efter runden** kan et gemt forslag fra **Mit hold** nu følges frem til officielle udfald. Vælg et opdateret officielt datagrundlag og tryk **Efterkontrollér gemt prognose**. Ingen prognose genberegnes, og der hentes ikke nye data i dette forløb.
 
-Standardvalget er seneste afsluttede GW med en gemt kørsel før deadline, derefter sidste oprettelsestid før deadline (med origin og sti som deterministiske tie-breakers). Det er en operationel udvælgelsesregel, ikke et valg af den kørsel, der bagefter klarede sig bedst. Andre gemte kørsler kan åbnes manuelt; de må ikke sammenblandes til en performancepåstand.
+Standardvalget er seneste afsluttede GW med en gemt kørsel før deadline, derefter sidste oprettelsestid før deadline (med origin og sti som deterministiske tie-breakers). Standardvalget bruger kun kørsler med standardmodellen; kørsler med en forsøgsmodel, fx minutmodel v2, er mærket i listen og vælges manuelt. Det er en operationel udvælgelsesregel, ikke et valg af den kørsel, der bagefter klarede sig bedst. Andre gemte kørsler kan åbnes manuelt; de må ikke sammenblandes til en performancepåstand.
 
 ## Hvad opgøres?
 

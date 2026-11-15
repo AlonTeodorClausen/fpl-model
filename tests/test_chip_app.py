@@ -33,7 +33,7 @@ def test_analysis_still_has_model_choices(monkeypatch,tmp_path):
     next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
     next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
     assert not app.exception
-    assert len(next(w for w in app.selectbox if w.label=='Prognosemodel').options)==6
+    assert next(w for w in app.selectbox if w.label=='Prognosemodel').options==['Standardmodel','Odds til angreb og forsvar · William Hill','Eksperiment · minutmodel v2']
 
 
 def test_unsaved_chip_choice_provenance_is_stable_across_reruns(monkeypatch,tmp_path):
@@ -57,3 +57,16 @@ def test_recommended_plan_is_initially_displayed_and_report_labels_are_clear(mon
     r=app.session_state['transfer_result'];selected=next(w for w in app.selectbox if w.label=='Strategi – se ugeplan').value
     assert r['packages'][selected]['plan_id']==r['recommendation']['plan_id']
     assert not any('bench_contribution_kind' in d.value.columns for d in app.dataframe)
+
+
+def test_lab_editor_uses_its_own_widget_keys(monkeypatch,tmp_path):
+    # Shared keys with Mit hold let the browser send empty values after a page switch.
+    setup(monkeypatch,tmp_path);save_profile(ready_profile(),tmp_path/'data/processed/my_team.json')
+    app=AppTest.from_file(str(ROOT/'app.py')).run(timeout=30)
+    saved=ready_profile()
+    assert app.session_state['owned_free']==saved['free_transfers']
+    next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter').run(timeout=30)
+    next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
+    assert not app.exception
+    assert app.session_state['lab_owned_free']==saved['free_transfers']
+    assert app.session_state['lab_owned_id_0'] in {p['player_id'] for p in saved['players']}

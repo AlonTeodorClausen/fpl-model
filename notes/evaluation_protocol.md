@@ -6,7 +6,7 @@ Fastlagt 15. november 2026, før GW11-deadline (21. november). Formålet er at b
 
 - **Udviklingsdata:** GW3–10. Alle resultater herfra er allerede set eller brugt til diagnostik og kan ikke dokumentere en forbedring.
 - **Prospektive vurderingsrunder:** GW11 og frem. En runde tæller kun, hvis prognosen er gemt før officiel deadline og efterkontrolleres med `evaluate_saved_forecast.py` mod endelige officielle labels.
-- **Valg af kørsel:** den eksisterende regel i `notes/daily_forecast_review.md`: sidste gemte kørsel før deadline. Ingen manuel udvælgelse af kørsler bagefter.
+- **Valg af kørsel:** den eksisterende regel i `notes/daily_forecast_review.md`: sidste gemte kørsel før deadline, for hver model for sig. En senere kørsel med en anden model erstatter aldrig standardmodellens kørsel. Ingen manuel udvælgelse af kørsler bagefter.
 - **Faste indstillinger:** `component_baseline_v1` som standard, seed 42, 3.000 prognosescenarier, ingen hits som standard.
 
 ## Mål
@@ -54,6 +54,14 @@ GW8–9 er hentet fra efterkontrollen `artifacts/forecast_reviews/20261107T09135
 
 Udviklingsrunderne samlet: realiseret gevinst +3 point mod 5,00 forventet. Det er tre runder og ikke evidens for noget; det er en baggrund for at holde øje med, om modellen systematisk overvurderer værdien af transfers.
 
+## Registrerede kandidater
+
+| Kandidat | Frosset | Vurderingsrunder | Status |
+|---|---|---|---|
+| `component_minutes_v2` ([specifikation](minutes_v2.md)) | 15. november 2026, commit `0e5e6e4` | GW12–15 | Afventer |
+
+For hver vurderingsrunde gemmes både en standardprognose og en v2-prognose før deadline, med samme datagrundlag, seed 42 og 3.000 scenarier. Begge efterkontrolleres mod samme endelige udfald.
+
 ## Ændringer i protokollen
 
-Ingen endnu.
+- **15. november 2026, før GW11-deadline:** reglen for valg af kørsel gælder for hver model for sig. Uden den præcisering kunne en v2-kørsel, gemt efter standardkørslen, blive valgt som standardmodellens kørsel. Appens standardvalg i **Efter runden** og oprydningen i prognosecaches følger nu denne regel. Ingen runde er påvirket.

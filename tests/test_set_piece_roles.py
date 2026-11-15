@@ -128,31 +128,6 @@ def test_cache_includes_roles_configuration_and_explanations(tmp_path):
     assert c['cache_key']!=b['cache_key']
 
 
-def test_app_exposes_roles_as_assumptions_without_network(monkeypatch,tmp_path):
-    from pathlib import Path
-    from streamlit.testing.v1 import AppTest
-    from test_my_team_app import setup
-    from test_my_team import profile
-    from fpl_model.my_team import save_profile
-    from test_transfer_planner import context
-    setup(monkeypatch,tmp_path);m=api();monkeypatch.setattr(m,'load_roles',lambda p:evidence(context()))
-    save_profile(profile(),tmp_path/'data/processed/my_team.json')
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run()
-    next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter')
-    app.run(timeout=30)
-    next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
-    model=next(w for w in app.selectbox if w.label=='Prognosemodel')
-    assert model.value=='Baseline'
-    model.set_value('Eksperiment · dødboldsroller og odds').run()
-    assert not app.exception
-    assert any('non-penalty' in x.value for x in app.warning)
-    next(b for b in app.button if b.label=='Sammenlign transferforslag').click().run(timeout=60)
-    assert not app.exception
-    report=app.session_state['lab_transfer_result']
-    assert report['forecast']['model_version']==m.VERSION
-    assert report['forecast']['set_piece_config']['role_confidence']==.5
-
-
 def test_comparison_report_is_reconciled_and_persisted_for_future_evaluation(tmp_path):
     from pathlib import Path
     from fpl_model.prediction_evaluation import save_forecasts,load_forecasts

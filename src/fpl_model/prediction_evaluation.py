@@ -54,7 +54,7 @@ def save_forecasts(data,event,simulations,config,evolution,coverage,root,*,set_p
         config=asdict(config),evolution=asdict(evolution) if evolution else None,coverage=coverage,
         players=[dict(player_id=p['id'],position=p['element_type'],fixture_ids=sorted(f['id'] for f in data['fixtures'] if f.get('event')==event and p['team'] in (f['team_h'],f['team_a']))) for p in first.players],
         variants=variants,scenarios_sha256=_sha(stage/'scenarios.npz'),
-        code_sha256={f:_sha(code_root/f) for f in ('simulation.py','model_evolution.py','role_minutes.py','set_piece_roles.py','conditional_bonus.py','season_priors.py','assist_correction.py','attacking_odds.py','models/baseline.py','scoring.py','prediction_evaluation.py')},
+        code_sha256={f:_sha(code_root/f) for f in ('simulation.py','model_evolution.py','role_minutes.py','set_piece_roles.py','conditional_bonus.py','season_priors.py','assist_correction.py','minutes_v2.py','attacking_odds.py','models/baseline.py','scoring.py','prediction_evaluation.py')},
         limitations=['No external clock attestation; timestamps and hashes are local records.',
             'Shared goals still use independent player minutes, not a legal team XI. Bonus remains marginal, not BPS ranking.',
             'Own goals omitted only in shared-goal variant. Event-type penalty/set-piece decomposition is unavailable.',

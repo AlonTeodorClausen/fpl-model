@@ -3,10 +3,11 @@ from datetime import datetime,timezone
 import json
 import streamlit as st
 from fpl_model.chips import CHIPS,LABELS,REBUILDS,normalize_chip_inventory
+from fpl_model.ui.editor_keys import editor_key
 
 
 def _confirmation(key,value):
-    stamp_key='owned_chip_confirmation_'+key
+    stamp_key=editor_key('owned_chip_confirmation_'+key)
     previous=st.session_state.get(stamp_key)
     if previous is None or previous[0]!=value:
         previous=(value,datetime.now(timezone.utc).isoformat())
@@ -19,13 +20,13 @@ def render_chip_inventory(profile,data):
     inv=normalize_chip_inventory(base)
     with st.expander('Mine chips · status og allerede foretagne transfers'):
         st.caption('Bekræft hvilke chips du har tilbage. Offentlig holdimport beviser ikke din fulde chiphistorik. Ændringer gemmes kun med Gem hold.')
-        st.session_state.setdefault('owned_chip_start',inv.get('entry_start_event'))
-        inv['entry_start_event']=st.number_input('Min første GW i sæsonen',min_value=1,max_value=38,value=None,step=1,key='owned_chip_start')
+        st.session_state.setdefault(editor_key('owned_chip_start'),inv.get('entry_start_event'))
+        inv['entry_start_event']=st.number_input('Min første GW i sæsonen',min_value=1,max_value=38,value=None,step=1,key=editor_key('owned_chip_start'))
         for half,label in [('first','Første sæt · GW1–19'),('second','Andet sæt · GW20–38')]:
             st.write(f'**{label}**')
             cols=st.columns(4)
             for col,name in zip(cols,CHIPS):
-                row=inv['halves'][half][name];key=f'owned_chip_{half}_{name}'
+                row=inv['halves'][half][name];key=editor_key(f'owned_chip_{half}_{name}')
                 st.session_state.setdefault(key,row['status'])
                 status=col.selectbox(f'{LABELS[name]} · {label}', ['unknown','available','used'],key=key,
                     format_func=lambda x:{'unknown':'Ikke bekræftet','available':'Til rådighed','used':'Brugt'}[x])
@@ -37,11 +38,11 @@ def render_chip_inventory(profile,data):
                 if status!=row['status'] or used!=row.get('used_event'):
                     row.update(status=status,used_event=used,source='manual',confirmed_at=_confirmation(key,(status,used)))
         active=inv.get('active_chip')
-        st.session_state.setdefault('owned_chip_active',active['name'] if active else None)
-        active_name=st.selectbox('Allerede aktiv chip på FPL', [None]+list(CHIPS),key='owned_chip_active',format_func=lambda c:LABELS.get(c,'Ingen'))
+        st.session_state.setdefault(editor_key('owned_chip_active'),active['name'] if active else None)
+        active_name=st.selectbox('Allerede aktiv chip på FPL', [None]+list(CHIPS),key=editor_key('owned_chip_active'),format_func=lambda c:LABELS.get(c,'Ingen'))
         if active_name:
-            st.session_state.setdefault('owned_chip_active_event',active['event'] if active else None)
-            active_event=st.number_input('GW for aktiv chip',min_value=1,max_value=38,value=None,step=1,key='owned_chip_active_event')
+            st.session_state.setdefault(editor_key('owned_chip_active_event'),active['event'] if active else None)
+            active_event=st.number_input('GW for aktiv chip',min_value=1,max_value=38,value=None,step=1,key=editor_key('owned_chip_active_event'))
             inv['active_chip']=dict(name=active_name,event=active_event)
             if active_event is not None:
                 h='first' if active_event<=19 else 'second'
@@ -55,13 +56,13 @@ def render_chip_inventory(profile,data):
         st.code('{"event": 7, "bank": 10, "free_transfers": 2, "existing_hits": 0,\n "players": [{"player_id": 123, "selling_price": 75}, "… alle 15 …"]}',language='json')
         st.caption('Bank og salgsværdier er i £0,1m: 10 = £1,0m. Brug officielle spiller-ID’er fra holdeditoren.')
         state=profile.get('pre_transfer_state')
-        st.session_state.setdefault('owned_chip_pre_json',json.dumps(state,ensure_ascii=False,indent=2) if state else '')
-        raw=st.text_area('Bekræftet tilstand før ugens transfers (JSON)',key='owned_chip_pre_json')
+        st.session_state.setdefault(editor_key('owned_chip_pre_json'),json.dumps(state,ensure_ascii=False,indent=2) if state else '')
+        raw=st.text_area('Bekræftet tilstand før ugens transfers (JSON)',key=editor_key('owned_chip_pre_json'))
         if raw.strip():
             state=json.loads(raw)
             if not isinstance(state,dict):raise ValueError('Tilstanden før transfers skal være et JSON-objekt.')
             if not state.get('confirmed_at'):
-                if st.checkbox('Jeg bekræfter oplysningerne før ugens transfers',key='owned_chip_confirm_pre'):state['confirmed_at']=_confirmation('pre',raw)
+                if st.checkbox('Jeg bekræfter oplysningerne før ugens transfers',key=editor_key('owned_chip_confirm_pre')):state['confirmed_at']=_confirmation('pre',raw)
         else:state=None
     result=dict(chip_inventory=inv)
     if state:result['pre_transfer_state']=state
@@ -80,7 +81,7 @@ def render_chip_schedule(profile,events,data,origin_at):
             binding=active and active['event']==event
             if binding:
                 options=[active['name']];st.info(f"GW{event}: {LABELS[active['name']]} er allerede aktiv.")
-            key=f'owned_chip_schedule_{event}'
+            key=editor_key(f'owned_chip_schedule_{event}')
             if st.session_state.get(key) not in options:st.session_state[key]=options[0]
             choice=st.selectbox(f'Chip · GW{event}',options,key=key,format_func=lambda c:LABELS.get(c,'Ingen chip'),disabled=bool(binding))
             if choice:plan[event]=choice

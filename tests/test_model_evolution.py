@@ -106,28 +106,12 @@ def test_goal_assignment_on_pitch_excludes_scorer_from_assists():
     assert not r[1]['assists'].any() and not r[2]['assists'].any()
 
 
-def test_new_variant_cache_and_app_are_explicit_and_keep_default(tmp_path,monkeypatch):
+def test_new_variant_cache_is_explicit_and_keeps_default(tmp_path,monkeypatch):
     m=module();from fpl_model.transfer_planner import forecast_bundle
     from test_transfer_planner import context
     data=context();base=forecast_bundle(data,[5],BaselineConfig(),origin_at=data['as_of_at'],cache_root=tmp_path/'cache',draws=100)
     new=forecast_bundle(data,[5],BaselineConfig(),origin_at=data['as_of_at'],cache_root=tmp_path/'cache',draws=100,evolution=m.EvolutionConfig())
     assert new['metadata']['model_version']=='component_shared_goals_v1' and new['cache_key']!=base['cache_key']
-    from pathlib import Path
-    from streamlit.testing.v1 import AppTest
-    from test_my_team_app import setup
-    from test_my_team import profile
-    from fpl_model.my_team import save_profile
-    setup(monkeypatch,tmp_path)
-    save_profile(profile(),tmp_path/'data/processed/my_team.json')
-    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py')).run()
-    next(w for w in app.radio if w.label=='Side').set_value('Analyse og eksperimenter')
-    app.run(timeout=30)
-    next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
-    model=next(w for w in app.selectbox if w.label=='Prognosemodel');assert model.value=='Baseline'
-    model.set_value('Eksperiment · rolle, returminutter og fælles mål').run()
-    next(b for b in app.button if b.label=='Sammenlign transferforslag').click().run(timeout=60)
-    assert not app.exception
-    assert app.session_state['lab_transfer_result']['forecast']['model_version']=='component_shared_goals_v1'
 
 
 def test_news_timestamp_is_capture_time_not_forecast_origin():

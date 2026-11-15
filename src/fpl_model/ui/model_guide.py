@@ -11,6 +11,7 @@ _VARIANTS = {
     'component_role_minutes_v1': 'Forsøg med nylig spillerrolle',
     'component_role_transitions_v2': 'Forsøg med rolleskift i spilletid',
     'component_shared_goals_v1': 'Forsøg med fælles holdmål',
+    'component_minutes_v2': 'Minutmodel v2 (afprøves)',
 }
 
 
@@ -114,6 +115,23 @@ def render():
                     f'{_decimal(x["sub_minutes"], 1)} minutter. Scenarier bruger afrundede '
                     'normaltræk omkring centrene (standardafvigelse 8 ved start, 9 ved indhop), '
                     'afgrænset til 1–90 og 1–59 minutter.')
+        st.warning('**Kendt svaghed:** afgrænsningen ved 90 trækker gennemsnittet ned. En spiller, '
+                   'der altid spiller hele kampen, har et center på omkring 89 minutter, men '
+                   'næsten halvdelen af normaltrækkene ligger over 90 og klippes til 90. '
+                   'Gennemsnittet bliver derfor omkring 86 minutter. Det passer med, at '
+                   'standardmodellen undervurderer faste spilleres minutter med 1–3 minutter i GW8–10.')
+        st.markdown('**Minutmodel v2 (afprøves på GW12–15).** Spilletiden deles i tre trin: '
+                    'chancen for at starte, chancen for at komme ind *når spilleren ikke starter*, '
+                    'og minutter givet rollen. Nyere kampe vægter mest: vægten halveres for hver '
+                    '5 kampe bagud. Hvert trin trækkes mod positionens tal fra alle spilleres '
+                    'tidligere kampe, med en styrke svarende til 2 kampe, så en målmand, der '
+                    'ikke starter, næsten aldrig kommer ind. Ved start trækkes først, om '
+                    'spilleren spiller hele kampen; ellers trækkes udskiftningstidspunktet. '
+                    'Dermed forsvinder afklipningsfejlen. Har spilleren misset mindst de 2 seneste '
+                    'kampe og er nu meldt klar, tæller fraværet ikke som tabt plads, men første '
+                    'kamp tilbage får startchancen ganget med 0,7.')
+        st.caption('v2 kan vælges i Transferlaboratoriet. Parametrene er fastlagt før evaluering '
+                   'og må ikke justeres undervejs; se notes/minutes_v2.md.')
         st.caption('Manglende kampvis historik bruger aktuelle sæsonaggregater som proxy, '
                    'hvis de findes; ellers eksplicitte priors. Ukendt skadechance ved visse '
                    f'FPL-statusser giver faktor {_decimal(config.injury_unknown_factor, 2)}. Fremtidige '
@@ -174,8 +192,8 @@ def render():
                  r'(P_j^{Poisson}-q_j)^2.')
         st.markdown('Ugyldigt marked, tvetydig kampmatch, maksimal sandsynlighedsfejl '
                     'over 0,06 eller odds hentet efter prognose/deadline giver eksplicit '
-                    'baseline-fallback. **Defensiv oddsvariant** ændrer kun clean sheets '
-                    'og indkasserede mål. **Angreb og forsvar** fordeler desuden forventede '
+                    'baseline-fallback. **Angreb og forsvar** ændrer clean sheets og '
+                    'indkasserede mål og fordeler desuden forventede '
                     'holdmål proportionalt med spillerens xG/xA-rate × forventet spilletid; '
                     'hændelser trækkes stadig individuelt. Bookmakerens `last_update` '
                     'er ikke dokumenteret publikationstid; lokal hentetid styrer tilgængelighed.')

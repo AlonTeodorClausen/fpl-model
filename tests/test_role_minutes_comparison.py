@@ -18,14 +18,9 @@ def test_report_uses_identical_rows_and_prior_groups_and_local_cli(monkeypatch,t
     assert len({r['n'] for r in report['summary']})==1
     assert {'starter','reserve','substitute','rotation'}<={r['group'] for r in report['by_role']}
     assert report['metadata']['candidate_options']['shared_goals'] is False
-    # Show saved report without recomputing predictions or needing saved live forecasts.
-    from fpl_model.ui.model_quality import show_role_comparison
-    app=AppTest.from_function(show_role_comparison,args=(tmp_path,)).run()
-    assert not app.exception
-    assert any('Ny rollespecifik model' in f.value.to_string() for f in app.dataframe)
 
 
-def test_app_keeps_baseline_default_and_new_variant_has_no_implicit_odds(monkeypatch,tmp_path):
+def test_app_keeps_standard_default_and_minutes_v2_has_no_implicit_odds(monkeypatch,tmp_path):
     from test_my_team_app import setup
     setup(monkeypatch,tmp_path)
     from fpl_model.my_team import save_profile
@@ -36,14 +31,14 @@ def test_app_keeps_baseline_default_and_new_variant_has_no_implicit_odds(monkeyp
     app.run(timeout=30)
     next(w for w in app.radio if w.label=='Analysevisning').set_value('Transferlaboratorium').run(timeout=30)
     model=next(w for w in app.selectbox if w.label=='Prognosemodel')
-    assert model.value=='Baseline'
-    model.set_value('Eksperiment · rollespecifik spilletid').run()
+    assert model.value=='Standardmodel'
+    model.set_value('Eksperiment · minutmodel v2').run()
     assert not app.exception
     assert not any(w.label=='Gemt odds-snapshot' for w in app.selectbox)
     import fpl_model.ui.my_team as ui
     actual=ui.forecast_bundle
     def checked(*args,**kw):
-        assert kw['evolution'].minutes_method=='role_transitions_v2'
+        assert kw['evolution'].minutes_method=='minutes_v2'
         assert not kw['evolution'].shared_goals and kw['odds'] is None
         return actual(*args,**kw)
     monkeypatch.setattr(ui,'forecast_bundle',checked)

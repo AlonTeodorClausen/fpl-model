@@ -58,69 +58,15 @@ def test_app_shows_coverage_and_grouped_evaluation_without_fetching(monkeypatch,
     assert app.session_state['result'][1].explanations[5]['history']['dnp_frequency']==1
 
 
-def test_app_can_show_saved_experiment_without_running_forecast(monkeypatch,tmp_path):
-    import json
+
+def test_analysis_page_shows_one_experiment_overview(monkeypatch,tmp_path):
     import fpl_model.prototype_data as source
-    import fpl_model.minutes_experiment as experiments
     from test_minutes_experiment import anchor
-    d,a=anchor();d['teams']=[dict(id=i,short_name=f'T{i}') for i in range(1,11)]
-    report=experiments.run_experiment(d,a,seeds=[42])
-    path=experiments.save_experiment(report,tmp_path/'experiment')/'comparison.json'
+    d,_=anchor();d['teams']=[dict(id=i,short_name=f'T{i}') for i in range(1,11)]
     monkeypatch.setattr(source,'snapshot_paths',lambda root:[tmp_path])
     monkeypatch.setattr(source,'load_data',lambda path:d)
-    assert hasattr(experiments,'comparison_paths')
-    monkeypatch.setattr(experiments,'comparison_paths',lambda root:[path])
     app=open_analysis()
     assert not app.exception
-    assert any('udviklingsdata' in w.value.lower() for w in app.warning)
-    assert any('component_frequency_010_v1' in f.value.to_string() for f in app.dataframe)
-    assert any('minutes_bias' in f.value.columns for f in app.dataframe)
-
-
-def test_app_shows_odds_fallback_and_clearly_labels_synthetic_example(monkeypatch,tmp_path):
-    from test_defensive_odds import coverage_data
-    from fpl_model.defensive_odds import build_coverage
-    from fpl_model.models.baseline import BaselineConfig
-    import fpl_model.odds_comparison as odds
-    import fpl_model.prototype_data as source
-    d,_,meta=coverage_data();d['teams']=[dict(id=i,name=f'T{i}',short_name=f'T{i}') for i in range(1,11)]
-    config=BaselineConfig()
-    report=odds.compare_forecasts(d,build_coverage(d,[],meta,5,config,d['as_of_at']),config,draws=100)
-    a=odds.save_comparison(report,tmp_path/'actual')/'comparison.json'
-    demo=odds.synthetic_demo(d,5,config,draws=100)
-    b=odds.save_comparison(demo,tmp_path/'demo')/'comparison.json'
-    monkeypatch.setattr(source,'snapshot_paths',lambda root:[tmp_path])
-    monkeypatch.setattr(source,'load_data',lambda p:d)
-    monkeypatch.setattr(odds,'comparison_paths',lambda root:[a,b])
-    app=open_analysis()
-    assert not app.exception
-    assert any('0/1' in e.value for e in app.markdown)
-    select=next(w for w in app.selectbox if w.label=='Odds-sammenligning')
-    select.set_value(b).run(timeout=30)
-    assert not app.exception
-    assert any('SYNTETISK' in e.value for e in app.warning)
-
-
-def test_app_shows_real_api_source_updates_and_xi_changes_without_network(monkeypatch,tmp_path):
-    from test_odds_api import api_context
-    from fpl_model.defensive_odds import build_coverage
-    from fpl_model.models.baseline import BaselineConfig
-    import fpl_model.odds_comparison as odds
-    import fpl_model.prototype_data as source
-    import requests
-    d,e,s=api_context()
-    d['teams']=[dict(id=i,name={1:'Man Utd',2:'Spurs'}.get(i,f'T{i}'),short_name=f'T{i}') for i in range(1,11)]
-    cfg=BaselineConfig();report=odds.compare_forecasts(d,build_coverage(d,[e],s,5,cfg,d['as_of_at']),cfg,draws=100)
-    path=odds.save_comparison(report,tmp_path/'api')/'comparison.json'
-    monkeypatch.setattr(source,'snapshot_paths',lambda root:[tmp_path])
-    monkeypatch.setattr(source,'load_data',lambda p:d)
-    monkeypatch.setattr(odds,'comparison_paths',lambda root:[path])
-    def forbidden(*a,**k):raise AssertionError('No app network')
-    monkeypatch.setattr(requests.sessions.Session,'request',forbidden)
-    app=open_analysis()
-    assert not app.exception
-    assert any('The Odds API' in x.value and 'williamhill' in x.value for x in app.markdown)
-    assert any('1/1' in x.value for x in app.markdown)
-    assert any('last_update' in str(f.value.columns) for f in app.dataframe)
-    assert any('XI' in x.value for x in app.markdown)
-    assert not any('SYNTETISK' in x.value for x in app.warning)
+    table=next(t.value for t in app.table if t.value.index.name=='Forsøg')
+    assert set(table.Status)=={'Standard','Tilvalg','Afprøves','Pensioneret'}
+    assert not any(e.label.startswith('Tre frekvenspriorer') for e in app.expander)
